@@ -22,6 +22,8 @@ PF_ANCHOR_NAME = "nexus_defense"
 SSH_USER = os.getenv("SSH_USER", "")
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 
+API_TOKEN = os.getenv("NEXUS_API_TOKEN", "")
+
 # Allowlist de comandos remotos via SSH. Apenas comandos de diagnóstico
 # read-only por padrão — nada que altere estado do host remoto. Para liberar
 # mais, defina SSH_EXTRA_ALLOWED_PATTERNS no .env com regexes separados por "|".
