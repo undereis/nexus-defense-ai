@@ -1,0 +1,7 @@
+.env
+venv/
+database/nexus.db
+__pycache__/
+*.pyc
+.DS_Store
+.claude/
