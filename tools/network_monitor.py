@@ -1,5 +1,6 @@
 """Monitoramento de rede e heurística de detecção de DDoS/anomalias."""
 
+import subprocess
 import time
 from collections import Counter, deque
 
@@ -7,28 +8,59 @@ import psutil
 
 from config import CONNECTIONS_PER_IP_THRESHOLD, MONITOR_WINDOW_SECONDS
 
-_access_denied_warned = False
+_warned_once = False
 
 
-def get_active_remote_ips() -> list[str]:
-    """Retorna a lista de IPs remotos com conexão estabelecida agora."""
-    global _access_denied_warned
-    ips = []
+def _warn_once(message: str):
+    global _warned_once
+    if not _warned_once:
+        _warned_once = True
+        print(f"\n[Nexus] {message}")
+
+
+def _get_active_remote_ips_psutil() -> list[str] | None:
+    """Tenta via psutil (mais rico, mas exige root no macOS). Retorna None
+    se não tiver permissão, para o caller cair no fallback via netstat."""
     try:
         conns = psutil.net_connections(kind="inet")
     except psutil.AccessDenied:
-        if not _access_denied_warned:
-            _access_denied_warned = True
-            print(
-                "\n[Nexus] AVISO: sem permissão para ler conexões de rede "
-                "(psutil.AccessDenied). O monitoramento de DDoS está rodando "
-                "mas não vai detectar nada até este processo rodar com sudo."
-            )
-        return ips
-    for c in conns:
-        if c.status == psutil.CONN_ESTABLISHED and c.raddr:
-            ips.append(c.raddr.ip)
+        return None
+    return [c.raddr.ip for c in conns if c.status == psutil.CONN_ESTABLISHED and c.raddr]
+
+
+def _get_active_remote_ips_netstat() -> list[str]:
+    """Lê conexões TCP estabelecidas via `netstat -an`, que no macOS não
+    exige privilégios de root (diferente de psutil.net_connections)."""
+    try:
+        result = subprocess.run(
+            ["netstat", "-an", "-p", "tcp"], capture_output=True, text=True, timeout=10
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        _warn_once(f"AVISO: netstat indisponível para monitorar a rede ({exc}).")
+        return []
+
+    ips = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[-1] != "ESTABLISHED":
+            continue
+        foreign = fields[-2]
+        if "." not in foreign:
+            continue
+        addr = foreign.rsplit(".", 1)[0]
+        if addr and addr != "*":
+            ips.append(addr)
     return ips
+
+
+def get_active_remote_ips() -> list[str]:
+    """Retorna a lista de IPs remotos com conexão estabelecida agora.
+    Usa psutil quando possível (roda com sudo); senão cai para netstat,
+    que funciona sem privilégios elevados no macOS."""
+    ips = _get_active_remote_ips_psutil()
+    if ips is not None:
+        return ips
+    return _get_active_remote_ips_netstat()
 
 
 class DdosDetector:
