@@ -74,8 +74,12 @@ def main():
                 continue
             if user_text.lower() in {"sair", "exit", "quit"}:
                 break
-            reply = ask_agent(user_text)
-            print(f"\n[Nexus] {reply}\n")
+            try:
+                reply = ask_agent(user_text)
+                print(f"\n[Nexus] {reply}\n")
+            except Exception as exc:
+                log_event("chat_error", None, str(exc))
+                print(f"\n[Nexus] Tive um erro interno processando isso: {exc}\n")
     except (KeyboardInterrupt, EOFError):
         pass
     finally:

@@ -37,7 +37,15 @@ def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise TimeoutError(f"Comando excedeu {timeout}s: {' '.join(cmd)}")
+        return subprocess.CompletedProcess(
+            cmd,
+            returncode=-1,
+            stdout="",
+            stderr=(
+                f"Comando excedeu o limite de {timeout}s e foi interrompido. "
+                "O alvo pode estar lento, filtrando o scan, ou o timeout é curto demais."
+            ),
+        )
 
 
 def nmap_scan(target: str, ports: str = "") -> str:
@@ -62,7 +70,7 @@ def nikto_scan(target: str) -> str:
     target = _validate_target(target)
     if not shutil.which("nikto"):
         return "nikto não está instalado. Rode: brew install nikto"
-    result = _run(["nikto", "-h", target, "-ask", "no"], timeout=240)
+    result = _run(["nikto", "-h", target, "-ask", "no", "-maxtime", "8m"], timeout=540)
     output = (result.stdout or "") + (result.stderr or "")
     return output.strip() or "Nikto não retornou saída."
 
