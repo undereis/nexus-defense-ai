@@ -11,7 +11,7 @@ from langgraph.prebuilt import create_react_agent
 
 from config import ANTHROPIC_API_KEY, CREATOR_NAME, MODEL_NAME
 from tools import firewall, recon
-from tools.network_monitor import DdosDetector, get_active_remote_ips
+from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
 

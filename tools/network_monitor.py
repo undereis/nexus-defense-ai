@@ -7,13 +7,23 @@ import psutil
 
 from config import CONNECTIONS_PER_IP_THRESHOLD, MONITOR_WINDOW_SECONDS
 
+_access_denied_warned = False
+
 
 def get_active_remote_ips() -> list[str]:
     """Retorna a lista de IPs remotos com conexão estabelecida agora."""
+    global _access_denied_warned
     ips = []
     try:
         conns = psutil.net_connections(kind="inet")
     except psutil.AccessDenied:
+        if not _access_denied_warned:
+            _access_denied_warned = True
+            print(
+                "\n[Nexus] AVISO: sem permissão para ler conexões de rede "
+                "(psutil.AccessDenied). O monitoramento de DDoS está rodando "
+                "mas não vai detectar nada até este processo rodar com sudo."
+            )
         return ips
     for c in conns:
         if c.status == psutil.CONN_ESTABLISHED and c.raddr:
