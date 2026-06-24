@@ -18,3 +18,6 @@ MONITOR_POLL_INTERVAL = 5
 ALERT_COOLDOWN_SECONDS = 300
 
 PF_ANCHOR_NAME = "nexus_defense"
+
+SSH_USER = os.getenv("SSH_USER", "")
+SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
