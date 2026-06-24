@@ -26,6 +26,14 @@ CREATE TABLE IF NOT EXISTS blocked_ips (
     blocked_at TEXT NOT NULL DEFAULT (datetime('now')),
     reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS threat_intel (
+    ip TEXT PRIMARY KEY,
+    first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    times_flagged INTEGER NOT NULL DEFAULT 0,
+    times_isolated INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -85,3 +93,52 @@ def remove_blocked_ip(ip: str):
 def list_blocked_ips():
     with get_conn() as conn:
         return conn.execute("SELECT ip, blocked_at, reason FROM blocked_ips").fetchall()
+
+
+def record_threat_flag(ip: str):
+    """Registra que um IP foi sinalizado como suspeito (acima do threshold)."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO threat_intel (ip, times_flagged) VALUES (?, 1)
+            ON CONFLICT(ip) DO UPDATE SET
+                times_flagged = times_flagged + 1,
+                last_seen = datetime('now')
+            """,
+            (ip,),
+        )
+
+
+def record_threat_isolation(ip: str):
+    """Registra que um IP foi efetivamente isolado pelo firewall."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO threat_intel (ip, times_flagged, times_isolated) VALUES (?, 0, 1)
+            ON CONFLICT(ip) DO UPDATE SET
+                times_isolated = times_isolated + 1,
+                last_seen = datetime('now')
+            """,
+            (ip,),
+        )
+
+
+def get_threat_history(ip: str):
+    """Retorna (first_seen, last_seen, times_flagged, times_isolated) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT first_seen, last_seen, times_flagged, times_isolated "
+            "FROM threat_intel WHERE ip = ?",
+            (ip,),
+        ).fetchone()
+
+
+def list_repeat_offenders(min_score: int = 1):
+    """Lista IPs com histórico de ataque, ordenados por reincidência."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, times_flagged, times_isolated, last_seen FROM threat_intel "
+            "WHERE (times_flagged + times_isolated) >= ? "
+            "ORDER BY times_isolated DESC, times_flagged DESC",
+            (min_score,),
+        ).fetchall()
