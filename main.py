@@ -11,29 +11,59 @@ import time
 
 from agents.nexus_agent import _detector
 from agents.runtime import ask_agent
-from config import ALERT_COOLDOWN_SECONDS, CREATOR_NAME, MONITOR_POLL_INTERVAL
+from config import (
+    ALERT_COOLDOWN_SECONDS,
+    AUTO_ISOLATE_MULTIPLIER,
+    CREATOR_NAME,
+    MONITOR_POLL_INTERVAL,
+)
 from database.db import init_db, log_event
+from tools import firewall
+from tools.policy import classify_threats
 
 _last_alerted: dict[str, float] = {}
+
+
+def _due_for_alert(ips: list[str], now: float) -> list[str]:
+    return [ip for ip in ips if now - _last_alerted.get(ip, 0) >= ALERT_COOLDOWN_SECONDS]
 
 
 def monitor_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
-            suspects = _detector.sample()
+            _detector.sample()
             now = time.time()
-            new_suspects = [
-                ip for ip in suspects
-                if now - _last_alerted.get(ip, 0) >= ALERT_COOLDOWN_SECONDS
-            ]
-            if new_suspects:
-                for ip in new_suspects:
+            counts = _detector.snapshot_counts()
+            severe, moderate = classify_threats(
+                counts, _detector.threshold, AUTO_ISOLATE_MULTIPLIER
+            )
+
+            due_severe = _due_for_alert(severe, now)
+            due_moderate = _due_for_alert(moderate, now)
+            for ip in due_severe + due_moderate:
+                _last_alerted[ip] = now
+
+            # Caminho rápido: ameaça muito acima do threshold é isolada na
+            # hora (decisão determinística), sem esperar round-trip de LLM.
+            for ip in due_severe:
+                reason = f"Auto-isolado: conexões {counts[ip]}x acima do normal"
+                log_event("ddos_severe", ip, reason)
+                result = firewall.block_ip(ip, reason)
+                print(f"\n[Nexus] AÇÃO AUTOMÁTICA: {result} ({reason})\n> ", end="", flush=True)
+                ask_agent(
+                    f"AVISO: acabei de isolar automaticamente o IP {ip} ({reason}), "
+                    "pois estava muito acima do limite configurado. Confirme que está "
+                    "registrado e me explique resumidamente o que foi feito."
+                )
+
+            # Caminho normal: ameaça moderada continua sendo avaliada pelo agente.
+            if due_moderate:
+                for ip in due_moderate:
                     log_event("ddos_suspect", ip, "Limite de conexões excedido na janela de monitoramento")
-                    _last_alerted[ip] = now
                 alert = (
                     "ALERTA AUTOMÁTICO DO MONITOR DE REDE: os seguintes IPs excederam o "
                     f"limite de conexões na janela de monitoramento e são suspeitos de DDoS: "
-                    f"{', '.join(new_suspects)}. Avalie e decida se deve isolá-los, explicando o motivo."
+                    f"{', '.join(due_moderate)}. Avalie e decida se deve isolá-los, explicando o motivo."
                 )
                 print(f"\n[Nexus] Anomalia detectada, analisando...")
                 reply = ask_agent(alert)
