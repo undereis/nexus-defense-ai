@@ -24,6 +24,11 @@ AUTO_ISOLATE_MULTIPLIER = float(os.getenv("AUTO_ISOLATE_MULTIPLIER", "0"))
 
 PF_ANCHOR_NAME = "nexus_defense"
 
+# A cada quantos segundos o loop de auditoria proativa verifica se algum
+# ativo autorizado já está "devido" para reauditoria (não é o intervalo
+# de scan em si, que é por host — ver authorize_asset_for_monitoring).
+PROACTIVE_AUDIT_POLL_INTERVAL = int(os.getenv("PROACTIVE_AUDIT_POLL_INTERVAL", "600"))
+
 SSH_USER = os.getenv("SSH_USER", "")
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 

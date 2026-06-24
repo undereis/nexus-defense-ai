@@ -16,6 +16,7 @@ from config import (
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
     MONITOR_POLL_INTERVAL,
+    PROACTIVE_AUDIT_POLL_INTERVAL,
 )
 from database.db import (
     get_findings_for_host,
@@ -26,6 +27,7 @@ from database.db import (
 )
 from tools import firewall
 from tools.policy import classify_threats
+from tools.proactive import check_asset, get_due_assets
 from tools.threat_intel import is_repeat_offender
 
 _last_alerted: dict[str, float] = {}
@@ -103,6 +105,27 @@ def monitor_loop(stop_event: threading.Event):
         stop_event.wait(MONITOR_POLL_INTERVAL)
 
 
+def proactive_audit_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            for host in get_due_assets():
+                changed, summary = check_asset(host)
+                if changed:
+                    print(f"\n[Nexus] Auditoria proativa detectou mudança em {host}, analisando...")
+                    log_event("proactive_audit_changed", host, "Achado diferente do último scan")
+                    reply = ask_agent(
+                        f"AUDITORIA PROATIVA: reauditei {host} (monitoramento automático que você "
+                        f"autorizou) e o resultado mudou desde a última vez. Novo resultado:\n\n"
+                        f"{summary}\n\nMe avise resumidamente o que mudou e se é preocupante."
+                    )
+                    print(f"\n[Nexus] {reply}\n> ", end="", flush=True)
+                else:
+                    log_event("proactive_audit_unchanged", host, "Sem mudanças desde o último scan")
+        except Exception as exc:
+            log_event("proactive_audit_error", None, str(exc))
+        stop_event.wait(PROACTIVE_AUDIT_POLL_INTERVAL)
+
+
 def main():
     init_db()
     print("=== Nexus Defense AI ===")
@@ -112,6 +135,10 @@ def main():
     stop_event = threading.Event()
     monitor_thread = threading.Thread(target=monitor_loop, args=(stop_event,), daemon=True)
     monitor_thread.start()
+    proactive_thread = threading.Thread(
+        target=proactive_audit_loop, args=(stop_event,), daemon=True
+    )
+    proactive_thread.start()
 
     try:
         while True:
