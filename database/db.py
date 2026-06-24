@@ -44,6 +44,13 @@ CREATE TABLE IF NOT EXISTS scan_findings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scan_findings_host ON scan_findings(host);
+
+CREATE TABLE IF NOT EXISTS authorized_assets (
+    host TEXT PRIMARY KEY,
+    added_at TEXT NOT NULL DEFAULT (datetime('now')),
+    interval_hours REAL NOT NULL DEFAULT 24,
+    last_scan_at TEXT
+);
 """
 
 
@@ -182,3 +189,48 @@ def list_scanned_hosts():
             "SELECT host, MAX(created_at) as last_scan, COUNT(*) as total "
             "FROM scan_findings GROUP BY host ORDER BY last_scan DESC"
         ).fetchall()
+
+
+def add_authorized_asset(host: str, interval_hours: float = 24):
+    """Autoriza um host a ser reauditado automaticamente pela Nexus em
+    intervalos regulares. Nunca é feito sem essa autorização explícita."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO authorized_assets (host, interval_hours) VALUES (?, ?)
+            ON CONFLICT(host) DO UPDATE SET interval_hours = excluded.interval_hours
+            """,
+            (host, interval_hours),
+        )
+
+
+def remove_authorized_asset(host: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM authorized_assets WHERE host = ?", (host,))
+
+
+def list_authorized_assets():
+    """Retorna (host, added_at, interval_hours, last_scan_at) de todos os ativos."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT host, added_at, interval_hours, last_scan_at FROM authorized_assets"
+        ).fetchall()
+
+
+def touch_asset_scan(host: str):
+    """Marca que um ativo autorizado acabou de ser reauditado agora."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE authorized_assets SET last_scan_at = datetime('now') WHERE host = ?",
+            (host,),
+        )
+
+
+def get_latest_finding(host: str, scan_type: str):
+    """Retorna (summary,) do achado mais recente de um tipo específico, ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT summary FROM scan_findings WHERE host = ? AND scan_type = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (host, scan_type),
+        ).fetchone()

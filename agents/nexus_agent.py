@@ -16,7 +16,7 @@ from database.db import (
     record_finding,
     record_threat_isolation,
 )
-from tools import access, firewall, recon, threat_intel
+from tools import access, firewall, proactive, recon, threat_intel
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
@@ -169,6 +169,28 @@ def list_audited_hosts() -> str:
 
 
 @tool
+def authorize_asset_for_monitoring(host: str, interval_hours: float = 24) -> str:
+    """Autoriza um host a ser reauditado automaticamente pela Nexus em
+    segundo plano, a cada N horas (padrão 24h). Use só quando o criador
+    confirmar explicitamente que esse host é dele/autorizado — a Nexus
+    nunca audita nada proativamente sem essa autorização."""
+    return proactive.authorize(host, interval_hours)
+
+
+@tool
+def revoke_asset_monitoring(host: str) -> str:
+    """Remove um host da auditoria proativa automática."""
+    return proactive.revoke(host)
+
+
+@tool
+def list_monitored_assets() -> str:
+    """Lista todos os hosts sob auditoria proativa automática, com o
+    intervalo configurado e quando foram checados por último."""
+    return proactive.describe_monitored_assets()
+
+
+@tool
 def curl_request(url: str) -> str:
     """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
     status, headers e um trecho do corpo da resposta. Use para inspecionar
@@ -212,6 +234,9 @@ TOOLS = [
     list_known_attackers,
     get_scan_history,
     list_audited_hosts,
+    authorize_asset_for_monitoring,
+    revoke_asset_monitoring,
+    list_monitored_assets,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -252,6 +277,11 @@ Sua missão:
    list_audited_hosts). Antes de rodar um scan novo, considere checar
    get_scan_history primeiro — se já houver um achado recente, mencione e
    pergunte se {CREATOR_NAME} quer mesmo repetir ou só ver o que já existe.
+9. Você pode monitorar hosts proativamente em segundo plano
+   (authorize_asset_for_monitoring), reauditando-os sozinha em intervalos
+   regulares e avisando {CREATOR_NAME} só quando algo MUDAR. Nunca
+   autorize um host por conta própria — só faça isso quando {CREATOR_NAME}
+   pedir explicitamente para monitorar aquele host específico.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
