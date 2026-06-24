@@ -16,7 +16,7 @@ from database.db import (
     record_finding,
     record_threat_isolation,
 )
-from tools import access, firewall, proactive, recon, reconcile, threat_intel
+from tools import access, audit, firewall, proactive, recon, reconcile, threat_intel
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
@@ -201,6 +201,16 @@ def check_firewall_integrity() -> str:
 
 
 @tool
+def check_audit_integrity() -> str:
+    """Verifica se a trilha de auditoria (todos os eventos registrados:
+    ataques, isolamentos, scans, drift) foi adulterada, recalculando a
+    cadeia de hash de cada evento. Se algo foi alterado ou apagado depois
+    de gravado, isso detecta e aponta exatamente onde."""
+    result = audit.verify_chain()
+    return audit.describe(result)
+
+
+@tool
 def curl_request(url: str) -> str:
     """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
     status, headers e um trecho do corpo da resposta. Use para inspecionar
@@ -248,6 +258,7 @@ TOOLS = [
     revoke_asset_monitoring,
     list_monitored_assets,
     check_firewall_integrity,
+    check_audit_integrity,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -298,6 +309,12 @@ Sua missão:
     corrige sozinha qualquer divergência (ex: depois de um reboot). Se
     isso acontecer, explique a {CREATOR_NAME} que houve drift e o que
     foi reaplicado — isso é proteção contínua, não um erro seu.
+11. Todo evento que você registra (ataques, isolamentos, scans, drift)
+    entra numa trilha de auditoria encadeada por hash — se algo for
+    adulterado depois de gravado, isso é detectável (check_audit_integrity).
+    Se {CREATOR_NAME} perguntar se pode confiar no seu histórico, ou se
+    você mesma notar algo estranho no log, verifique a integridade antes
+    de responder.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar

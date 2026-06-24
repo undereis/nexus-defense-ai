@@ -1,8 +1,15 @@
+import hashlib
 import sqlite3
+import threading
 from contextlib import contextmanager
+from datetime import datetime, timezone
+
 from config import DB_PATH
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+GENESIS_HASH = "0" * 64
+_event_chain_lock = threading.Lock()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -11,7 +18,9 @@ CREATE TABLE IF NOT EXISTS events (
     event_type TEXT NOT NULL,
     source_ip TEXT,
     detail TEXT,
-    action_taken TEXT
+    action_taken TEXT,
+    prev_hash TEXT,
+    entry_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation (
@@ -67,14 +76,51 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        # Migração para bancos criados antes da trilha de auditoria com hash
+        # chain existir: adiciona as colunas sem perder eventos já gravados.
+        for column in ("prev_hash TEXT", "entry_hash TEXT"):
+            try:
+                conn.execute(f"ALTER TABLE events ADD COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass  # coluna já existe
+
+
+def _compute_entry_hash(prev_hash: str, timestamp: str, event_type: str,
+                         source_ip: str | None, detail: str, action_taken: str) -> str:
+    payload = "|".join([prev_hash, timestamp, event_type, source_ip or "", detail, action_taken])
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def log_event(event_type: str, source_ip: str | None, detail: str, action_taken: str = ""):
+    """Grava um evento de auditoria encadeado por hash: cada entrada inclui
+    o hash da entrada anterior, formando uma cadeia (como um mini-blockchain
+    local). Qualquer alteração retroativa de um evento já gravado quebra a
+    cadeia a partir desse ponto — verificável com tools/audit.verify_chain()."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with _event_chain_lock:
+        with get_conn() as conn:
+            row = conn.execute(
+                "SELECT entry_hash FROM events ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            prev_hash = (row[0] if row and row[0] else GENESIS_HASH)
+            entry_hash = _compute_entry_hash(
+                prev_hash, timestamp, event_type, source_ip, detail, action_taken
+            )
+            conn.execute(
+                "INSERT INTO events (timestamp, event_type, source_ip, detail, "
+                "action_taken, prev_hash, entry_hash) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (timestamp, event_type, source_ip, detail, action_taken, prev_hash, entry_hash),
+            )
+
+
+def get_all_events():
+    """Retorna todos os eventos em ordem, com os campos do hash chain, para
+    verificação de integridade."""
     with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO events (event_type, source_ip, detail, action_taken) VALUES (?, ?, ?, ?)",
-            (event_type, source_ip, detail, action_taken),
-        )
+        return conn.execute(
+            "SELECT id, timestamp, event_type, source_ip, detail, action_taken, "
+            "prev_hash, entry_hash FROM events ORDER BY id ASC"
+        ).fetchall()
 
 
 def save_message(role: str, content: str):
