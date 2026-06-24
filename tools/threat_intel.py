@@ -8,6 +8,7 @@ isolado antes não precisa esperar o mesmo processo de novo.
 """
 
 from database.db import (
+    get_findings_for_host,
     get_threat_history,
     list_repeat_offenders,
     record_threat_flag,
@@ -49,6 +50,29 @@ def describe_history(ip: str) -> str:
     ]
     if score >= 10:
         lines.append("  -> REINCIDENTE CONHECIDO: tratar com prioridade máxima.")
+    return "\n".join(lines)
+
+
+def correlate(ip: str) -> str:
+    """Cruza o histórico de ataque de um IP com qualquer auditoria de
+    segurança já feita nesse mesmo endereço (nmap, nikto, ssl, headers).
+    É o que transforma dois logs separados em inteligência de ameaça: se
+    o IP que te atacou também já foi auditado, a Nexus sabe o que ele tem
+    de exposto, não só que ele atacou."""
+    history = describe_history(ip)
+    findings = get_findings_for_host(ip)
+
+    if not findings:
+        return f"{history}\n\nNenhuma auditoria de segurança prévia registrada para {ip}."
+
+    lines = [history, "", f"AUDITORIAS PRÉVIAS EM {ip} ({len(findings)} encontrada(s)):"]
+    for scan_type, summary, created_at in findings:
+        preview = summary[:200] + ("..." if len(summary) > 200 else "")
+        lines.append(f"  [{created_at}] {scan_type}: {preview}")
+    lines.append(
+        "\n-> Este IP já foi auditado antes: use os achados acima para entender "
+        "o que ele pode estar explorando ou de onde o ataque pode estar vindo."
+    )
     return "\n".join(lines)
 
 
