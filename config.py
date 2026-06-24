@@ -38,6 +38,12 @@ SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 
 API_TOKEN = os.getenv("NEXUS_API_TOKEN", "")
 
+# Webhook genérico para notificações fora do terminal (Slack incoming
+# webhook, Discord webhook, ou qualquer endpoint custom que aceite JSON
+# via POST). Vazio = notificações ficam só no terminal, como sempre foi.
+NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
+NOTIFY_WEBHOOK_FORMAT = os.getenv("NOTIFY_WEBHOOK_FORMAT", "slack")  # slack | discord | raw
+
 # Allowlist de comandos remotos via SSH. Apenas comandos de diagnóstico
 # read-only por padrão — nada que altere estado do host remoto. Para liberar
 # mais, defina SSH_EXTRA_ALLOWED_PATTERNS no .env com regexes separados por "|".
