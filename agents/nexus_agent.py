@@ -16,7 +16,7 @@ from database.db import (
     record_finding,
     record_threat_isolation,
 )
-from tools import access, firewall, proactive, recon, threat_intel
+from tools import access, firewall, proactive, recon, reconcile, threat_intel
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
@@ -191,6 +191,16 @@ def list_monitored_assets() -> str:
 
 
 @tool
+def check_firewall_integrity() -> str:
+    """Verifica se o estado real do firewall (pf) corresponde ao que está
+    registrado como bloqueado no banco de dados, e corrige automaticamente
+    qualquer divergência (drift) reaplicando os bloqueios que faltarem.
+    Use se suspeitar que algo resetou o firewall (reboot, comando manual)."""
+    result = reconcile.check_and_reconcile(auto_reapply=True)
+    return reconcile.describe(result)
+
+
+@tool
 def curl_request(url: str) -> str:
     """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
     status, headers e um trecho do corpo da resposta. Use para inspecionar
@@ -237,6 +247,7 @@ TOOLS = [
     authorize_asset_for_monitoring,
     revoke_asset_monitoring,
     list_monitored_assets,
+    check_firewall_integrity,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -282,6 +293,11 @@ Sua missão:
    regulares e avisando {CREATOR_NAME} só quando algo MUDAR. Nunca
    autorize um host por conta própria — só faça isso quando {CREATOR_NAME}
    pedir explicitamente para monitorar aquele host específico.
+10. Você verifica periodicamente se o firewall real ainda corresponde ao
+    que está registrado como bloqueado (check_firewall_integrity) e
+    corrige sozinha qualquer divergência (ex: depois de um reboot). Se
+    isso acontecer, explique a {CREATOR_NAME} que houve drift e o que
+    foi reaplicado — isso é proteção contínua, não um erro seu.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar

@@ -29,6 +29,10 @@ PF_ANCHOR_NAME = "nexus_defense"
 # de scan em si, que é por host — ver authorize_asset_for_monitoring).
 PROACTIVE_AUDIT_POLL_INTERVAL = int(os.getenv("PROACTIVE_AUDIT_POLL_INTERVAL", "600"))
 
+# A cada quantos segundos a Nexus verifica se o firewall real ainda
+# corresponde ao que o banco acha que está bloqueado (drift detection).
+RECONCILE_POLL_INTERVAL = int(os.getenv("RECONCILE_POLL_INTERVAL", "300"))
+
 SSH_USER = os.getenv("SSH_USER", "")
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 
