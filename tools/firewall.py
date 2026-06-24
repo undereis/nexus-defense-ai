@@ -45,17 +45,27 @@ def setup_firewall() -> str:
             return f"Falha ao atualizar pf.conf: {append.stderr}"
 
     reload_result = _run(["sudo", "pfctl", "-f", PF_CONF])
-    enable_result = _run(["sudo", "pfctl", "-e"])
+    _run(["sudo", "pfctl", "-e"])
 
-    if reload_result.returncode != 0 and "already" not in reload_result.stderr.lower():
-        return f"Falha ao recarregar pf: {reload_result.stderr}"
+    # "pfctl -f" sempre imprime o aviso inofensivo de ALTQ no stderr no macOS;
+    # o que importa é se a tabela do nosso anchor de fato carregou no kernel.
+    if reload_result.returncode != 0:
+        return f"Falha ao recarregar pf: {reload_result.stderr.strip()}"
 
-    return "Firewall (pf) configurado e ativo."
+    verify = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "show"])
+    if verify.returncode != 0:
+        return (
+            "Setup rodou, mas a tabela de bloqueio não carregou no anchor "
+            f"({verify.stderr.strip()}). Verifique se '{PF_ANCHOR_NAME}' está em {PF_CONF} "
+            "antes de qualquer anchor genérico de terceiros (ex: com.apple)."
+        )
+
+    return "Firewall (pf) configurado e ativo. Anchor e tabela de bloqueio confirmados no kernel."
 
 
 def block_ip(ip: str, reason: str = "") -> str:
     ip = _validate_ip(ip)
-    result = _run(["sudo", "pfctl", "-t", TABLE_NAME, "-T", "add", ip])
+    result = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "add", ip])
     if result.returncode != 0:
         return f"Falha ao bloquear {ip}: {result.stderr.strip()}"
     record_blocked_ip(ip, reason)
@@ -64,7 +74,7 @@ def block_ip(ip: str, reason: str = "") -> str:
 
 def unblock_ip(ip: str) -> str:
     ip = _validate_ip(ip)
-    result = _run(["sudo", "pfctl", "-t", TABLE_NAME, "-T", "delete", ip])
+    result = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "delete", ip])
     if result.returncode != 0:
         return f"Falha ao desbloquear {ip}: {result.stderr.strip()}"
     remove_blocked_ip(ip)
@@ -72,7 +82,7 @@ def unblock_ip(ip: str) -> str:
 
 
 def list_blocked() -> str:
-    result = _run(["sudo", "pfctl", "-t", TABLE_NAME, "-T", "show"])
+    result = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "show"])
     if result.returncode != 0:
         return f"Falha ao listar bloqueios: {result.stderr.strip()}"
     return result.stdout.strip() or "Nenhum IP bloqueado atualmente."
