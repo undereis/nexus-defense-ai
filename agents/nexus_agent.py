@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from config import ANTHROPIC_API_KEY, CREATOR_NAME, MODEL_NAME
-from tools import firewall, recon
+from tools import access, firewall, recon
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
@@ -97,6 +97,31 @@ def run_zap_baseline(target: str) -> str:
     return recon.zap_baseline_scan(target)
 
 
+@tool
+def curl_request(url: str) -> str:
+    """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
+    status, headers e um trecho do corpo da resposta. Use para inspecionar
+    rapidamente um serviço web/painel (ex: Portainer na porta 8080)."""
+    return access.http_probe(url)
+
+
+@tool
+def check_ssh_availability(host: str, port: int = 22) -> str:
+    """Verifica se a porta SSH de um host de teste está aberta e captura o
+    banner do serviço, sem autenticar nem executar nada remotamente."""
+    return access.check_ssh_port(host, port)
+
+
+@tool
+def run_remote_command(host: str, command: str, user: str = "", port: int = 22) -> str:
+    """Executa UM comando remoto via SSH em um host de teste que o criador
+    confirmou ter autorização para acessar (ex: 'systemctl status nginx',
+    'docker ps'). Usa autenticação por chave configurada em SSH_KEY_PATH.
+    Toda execução é registrada para auditoria. Nunca use em hosts que o
+    criador não autorizou explicitamente."""
+    return access.ssh_run_command(host, command, user, port)
+
+
 TOOLS = [
     check_network_status,
     isolate_ip,
@@ -108,6 +133,9 @@ TOOLS = [
     check_http_security_headers,
     check_ssl_tls,
     run_zap_baseline,
+    curl_request,
+    check_ssh_availability,
+    run_remote_command,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -130,6 +158,13 @@ Sua missão:
    usando nmap (portas/serviços), Nikto (vulnerabilidades web), SSL Labs
    (qualidade do TLS) e checagem de headers HTTP — sempre assumindo que
    {CREATOR_NAME} só pede isso para ativos que ele tem autorização de testar.
+6. Acessar diretamente hosts de teste autorizados quando {CREATOR_NAME} pedir:
+   fazer requisições HTTP (curl_request), checar disponibilidade de SSH
+   (check_ssh_availability), e executar comandos remotos pontuais via SSH
+   (run_remote_command) — esta última é uma ferramenta de alto impacto.
+   Antes de rodar um comando remoto, confirme o que ele faz e por que é
+   seguro; nunca rode comandos destrutivos (rm, dd, shutdown, etc.) sem
+   {CREATOR_NAME} pedir explicitamente e entender a consequência.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
