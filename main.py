@@ -17,9 +17,10 @@ from config import (
     CREATOR_NAME,
     MONITOR_POLL_INTERVAL,
 )
-from database.db import init_db, log_event
+from database.db import init_db, log_event, record_threat_flag, record_threat_isolation
 from tools import firewall
 from tools.policy import classify_threats
+from tools.threat_intel import is_repeat_offender
 
 _last_alerted: dict[str, float] = {}
 
@@ -38,17 +39,31 @@ def monitor_loop(stop_event: threading.Event):
                 counts, _detector.threshold, AUTO_ISOLATE_MULTIPLIER
             )
 
+            # Memória institucional: um IP moderado que já é reincidente
+            # conhecido (atacou/foi isolado antes) não precisa repetir todo
+            # o processo de novo — escala direto para o caminho rápido.
+            escalated = [ip for ip in moderate if is_repeat_offender(ip)]
+            if escalated:
+                severe = severe + escalated
+                moderate = [ip for ip in moderate if ip not in escalated]
+
             due_severe = _due_for_alert(severe, now)
             due_moderate = _due_for_alert(moderate, now)
             for ip in due_severe + due_moderate:
                 _last_alerted[ip] = now
 
-            # Caminho rápido: ameaça muito acima do threshold é isolada na
-            # hora (decisão determinística), sem esperar round-trip de LLM.
+            # Caminho rápido: ameaça muito acima do threshold (ou reincidente
+            # conhecido) é isolada na hora, sem esperar round-trip de LLM.
             for ip in due_severe:
-                reason = f"Auto-isolado: conexões {counts[ip]}x acima do normal"
+                reason = (
+                    f"Auto-isolado: reincidente conhecido"
+                    if ip in escalated
+                    else f"Auto-isolado: conexões {counts[ip]}x acima do normal"
+                )
                 log_event("ddos_severe", ip, reason)
+                record_threat_flag(ip)
                 result = firewall.block_ip(ip, reason)
+                record_threat_isolation(ip)
                 print(f"\n[Nexus] AÇÃO AUTOMÁTICA: {result} ({reason})\n> ", end="", flush=True)
                 ask_agent(
                     f"AVISO: acabei de isolar automaticamente o IP {ip} ({reason}), "
@@ -60,6 +75,7 @@ def monitor_loop(stop_event: threading.Event):
             if due_moderate:
                 for ip in due_moderate:
                     log_event("ddos_suspect", ip, "Limite de conexões excedido na janela de monitoramento")
+                    record_threat_flag(ip)
                 alert = (
                     "ALERTA AUTOMÁTICO DO MONITOR DE REDE: os seguintes IPs excederam o "
                     f"limite de conexões na janela de monitoramento e são suspeitos de DDoS: "

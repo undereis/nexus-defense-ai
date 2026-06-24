@@ -10,7 +10,8 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from config import ANTHROPIC_API_KEY, CREATOR_NAME, MODEL_NAME
-from tools import access, firewall, recon
+from database.db import record_threat_isolation
+from tools import access, firewall, recon, threat_intel
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
@@ -37,7 +38,24 @@ def isolate_ip(ip: str, reason: str = "Ataque detectado") -> str:
     """Isola (bloqueia) um endereço IP na rede local usando o firewall (pfctl),
     cortando toda comunicação com ele. Use quando confirmar um ataque ou
     comportamento malicioso vindo desse IP."""
-    return firewall.block_ip(ip, reason)
+    result = firewall.block_ip(ip, reason)
+    record_threat_isolation(ip)
+    return result
+
+
+@tool
+def check_threat_history(ip: str) -> str:
+    """Consulta o histórico de ameaça de um IP: quantas vezes já foi
+    sinalizado como suspeito ou isolado antes, e há quanto tempo. Use para
+    avaliar se um IP é um atacante recorrente antes de decidir uma ação."""
+    return threat_intel.describe_history(ip)
+
+
+@tool
+def list_known_attackers() -> str:
+    """Lista todos os IPs com histórico de ataque registrado, do mais
+    reincidente ao menos, com base na memória de longo prazo da Nexus."""
+    return threat_intel.describe_repeat_offenders()
 
 
 @tool
@@ -136,6 +154,8 @@ TOOLS = [
     curl_request,
     check_ssh_availability,
     run_remote_command,
+    check_threat_history,
+    list_known_attackers,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -165,6 +185,12 @@ Sua missão:
    read-only pré-aprovados em uma allowlist (docker ps, systemctl status,
    uptime, etc.) — comandos fora da allowlist são bloqueados automaticamente,
    não tente contornar isso encadeando comandos ou usando variações.
+7. Você tem memória institucional de longo prazo (check_threat_history,
+   list_known_attackers): antes de decidir sobre um IP suspeito, considere
+   se ele já tem histórico de ataque. Reincidentes conhecidos são escalados
+   automaticamente para isolamento mais rápido pelo monitor — quando isso
+   acontecer, explique a {CREATOR_NAME} que a ação foi mais rápida por causa
+   do histórico, não foi um capricho seu.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
