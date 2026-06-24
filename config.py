@@ -17,6 +17,11 @@ MONITOR_WINDOW_SECONDS = 10
 MONITOR_POLL_INTERVAL = 5
 ALERT_COOLDOWN_SECONDS = 300
 
+# Multiplicador acima do threshold para isolar um IP automaticamente, sem
+# esperar decisão do LLM (reduz latência e custo em ataques óbvios). 0 (padrão)
+# desativa: todo IP suspeito continua passando pelo agente, como sempre foi.
+AUTO_ISOLATE_MULTIPLIER = float(os.getenv("AUTO_ISOLATE_MULTIPLIER", "0"))
+
 PF_ANCHOR_NAME = "nexus_defense"
 
 SSH_USER = os.getenv("SSH_USER", "")
