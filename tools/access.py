@@ -13,12 +13,18 @@ import subprocess
 
 import requests
 
-from config import SSH_KEY_PATH, SSH_USER
+from config import SSH_ALLOWED_PATTERNS, SSH_KEY_PATH, SSH_USER
 from database.db import log_event
 
 _HOSTNAME_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.[A-Za-z0-9-]{1,63}(?<!-))*$"
 )
+_ALLOWED_COMMAND_RE = [re.compile(p) for p in SSH_ALLOWED_PATTERNS]
+
+
+def _is_command_allowed(command: str) -> bool:
+    command = command.strip()
+    return any(p.match(command) for p in _ALLOWED_COMMAND_RE)
 
 
 def _validate_host(host: str) -> str:
@@ -71,6 +77,13 @@ def ssh_run_command(host: str, command: str, user: str = "", port: int = 22) -> 
     SSH_USER e SSH_KEY_PATH configurados no .env caso `user` não seja informado.
     Toda execução é registrada em database/events para auditoria."""
     host = _validate_host(host)
+    if not _is_command_allowed(command):
+        log_event("ssh_command_blocked", host, f"command={command!r}", action_taken="bloqueado")
+        return (
+            f"Comando bloqueado pela allowlist: '{command}'. Só comandos de diagnóstico "
+            "read-only são permitidos por padrão (docker ps, systemctl status, uptime, df -h, "
+            "etc). Para liberar outro padrão, adicione um regex em SSH_EXTRA_ALLOWED_PATTERNS no .env."
+        )
     ssh_user = user or SSH_USER
     if not ssh_user:
         return "Nenhum usuário SSH configurado. Defina SSH_USER no .env ou informe o parâmetro 'user'."
