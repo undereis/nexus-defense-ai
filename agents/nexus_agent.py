@@ -20,8 +20,8 @@ _detector = DdosDetector()
 def check_network_status() -> str:
     """Verifica o estado atual da rede: IPs conectados e contagens, e se algum
     IP está ultrapassando o limite de conexões (possível DDoS)."""
-    counts = _detector.snapshot_counts()
     suspects = _detector.sample()
+    counts = _detector.snapshot_counts()
     if not counts:
         return "Nenhuma conexão remota ativa detectada neste momento."
     top = counts.most_common(10)
