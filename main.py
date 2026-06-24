@@ -9,33 +9,12 @@ a origem do ataque.
 import threading
 import time
 
-from agents.nexus_agent import build_agent, _detector
+from agents.nexus_agent import _detector
+from agents.runtime import ask_agent
 from config import ALERT_COOLDOWN_SECONDS, CREATOR_NAME, MONITOR_POLL_INTERVAL
 from database.db import init_db, log_event
-from memory import memory_store
 
-_agent = None
-_lock = threading.Lock()
 _last_alerted: dict[str, float] = {}
-
-
-def get_agent():
-    global _agent
-    if _agent is None:
-        _agent = build_agent()
-    return _agent
-
-
-def ask_agent(user_text: str) -> str:
-    agent = get_agent()
-    history = memory_store.load_history(limit=20)
-    messages = [(m["role"], m["content"]) for m in history] + [("user", user_text)]
-    with _lock:
-        result = agent.invoke({"messages": messages})
-    reply = result["messages"][-1].content
-    memory_store.remember("user", user_text)
-    memory_store.remember("assistant", reply)
-    return reply
 
 
 def monitor_loop(stop_event: threading.Event):

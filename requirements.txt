@@ -5,3 +5,7 @@ anthropic
 psutil
 python-dotenv
 requests
+fastapi
+uvicorn
+pytest
+pytest-mock
