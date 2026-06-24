@@ -10,7 +10,12 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from config import ANTHROPIC_API_KEY, CREATOR_NAME, MODEL_NAME
-from database.db import record_threat_isolation
+from database.db import (
+    get_findings_for_host,
+    list_scanned_hosts,
+    record_finding,
+    record_threat_isolation,
+)
 from tools import access, firewall, recon, threat_intel
 from tools.network_monitor import DdosDetector
 
@@ -83,7 +88,9 @@ def scan_ports(target: str, ports: str = "") -> str:
     """Escaneia portas e serviços abertos de um host/domínio com nmap (-sV).
     Use apenas em domínios/IPs que o criador confirmou ter autorização para
     testar. Opcionalmente aceita uma lista/intervalo de portas (ex: '80,443')."""
-    return recon.nmap_scan(target, ports)
+    result = recon.nmap_scan(target, ports)
+    record_finding(target, "nmap", result)
+    return result
 
 
 @tool
@@ -91,28 +98,65 @@ def scan_web_vulnerabilities(target: str) -> str:
     """Roda o Nikto contra um domínio/host para encontrar arquivos perigosos,
     configurações inseguras e software de servidor desatualizado. Pode levar
     alguns minutos. Use apenas em alvos autorizados."""
-    return recon.nikto_scan(target)
+    result = recon.nikto_scan(target)
+    record_finding(target, "nikto", result)
+    return result
 
 
 @tool
 def check_http_security_headers(target: str) -> str:
     """Verifica os headers de segurança HTTP (HSTS, CSP, X-Frame-Options etc.)
     de um domínio, equivalente a uma checagem do securityheaders.com."""
-    return recon.check_security_headers(target)
+    result = recon.check_security_headers(target)
+    record_finding(target, "security_headers", result)
+    return result
 
 
 @tool
 def check_ssl_tls(target: str) -> str:
     """Consulta o SSL Labs (Qualys) para avaliar a configuração TLS/SSL de um
     domínio e retorna a nota (grade) obtida. Pode levar até 1-2 minutos."""
-    return recon.check_ssl_labs(target)
+    result = recon.check_ssl_labs(target)
+    record_finding(target, "ssl_labs", result)
+    return result
 
 
 @tool
 def run_zap_baseline(target: str) -> str:
     """Roda um scan baseline do OWASP ZAP contra uma URL, se o ZAP estiver
     instalado. Caso contrário, retorna instruções de instalação."""
-    return recon.zap_baseline_scan(target)
+    result = recon.zap_baseline_scan(target)
+    record_finding(target, "zap_baseline", result)
+    return result
+
+
+@tool
+def get_scan_history(host: str) -> str:
+    """Mostra o histórico de auditorias de segurança já feitas em um host
+    (nmap, nikto, ssl labs, headers, zap), do mais recente ao mais antigo.
+    Use antes de rodar um novo scan, para ver se já foi auditado e se algo
+    mudou desde a última vez."""
+    rows = get_findings_for_host(host)
+    if not rows:
+        return f"Nenhuma auditoria anterior registrada para {host}."
+    lines = [f"Histórico de auditorias em {host} (mais recente primeiro):", ""]
+    for scan_type, summary, created_at in rows:
+        preview = summary[:300] + ("..." if len(summary) > 300 else "")
+        lines.append(f"[{created_at}] {scan_type}:\n{preview}\n")
+    return "\n".join(lines)
+
+
+@tool
+def list_audited_hosts() -> str:
+    """Lista todos os hosts/domínios já auditados pela Nexus, com a data
+    da última auditoria e quantos scans já foram feitos em cada um."""
+    rows = list_scanned_hosts()
+    if not rows:
+        return "Nenhum host auditado ainda."
+    lines = ["Hosts já auditados:"]
+    for host, last_scan, total in rows:
+        lines.append(f"  {host}: {total} scan(s), último em {last_scan}")
+    return "\n".join(lines)
 
 
 @tool
@@ -156,6 +200,8 @@ TOOLS = [
     run_remote_command,
     check_threat_history,
     list_known_attackers,
+    get_scan_history,
+    list_audited_hosts,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -191,6 +237,11 @@ Sua missão:
    automaticamente para isolamento mais rápido pelo monitor — quando isso
    acontecer, explique a {CREATOR_NAME} que a ação foi mais rápida por causa
    do histórico, não foi um capricho seu.
+8. Toda auditoria de segurança (nmap, nikto, ssl labs, headers, zap) é
+   automaticamente registrada no histórico do host (get_scan_history,
+   list_audited_hosts). Antes de rodar um scan novo, considere checar
+   get_scan_history primeiro — se já houver um achado recente, mencione e
+   pergunte se {CREATOR_NAME} quer mesmo repetir ou só ver o que já existe.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar

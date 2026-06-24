@@ -34,6 +34,16 @@ CREATE TABLE IF NOT EXISTS threat_intel (
     times_flagged INTEGER NOT NULL DEFAULT 0,
     times_isolated INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS scan_findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    scan_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_findings_host ON scan_findings(host);
 """
 
 
@@ -141,4 +151,34 @@ def list_repeat_offenders(min_score: int = 1):
             "WHERE (times_flagged + times_isolated) >= ? "
             "ORDER BY times_isolated DESC, times_flagged DESC",
             (min_score,),
+        ).fetchall()
+
+
+def record_finding(host: str, scan_type: str, summary: str):
+    """Persiste o resultado de um scan de segurança (nmap, nikto, ssl, etc)
+    para o host, formando um histórico de postura de segurança ao longo
+    do tempo — sem isso, cada scan se perdia quando a conversa rotacionava."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO scan_findings (host, scan_type, summary) VALUES (?, ?, ?)",
+            (host, scan_type, summary),
+        )
+
+
+def get_findings_for_host(host: str, limit: int = 10):
+    """Retorna os achados mais recentes de um host, do mais novo ao mais antigo."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT scan_type, summary, created_at FROM scan_findings "
+            "WHERE host = ? ORDER BY id DESC LIMIT ?",
+            (host, limit),
+        ).fetchall()
+
+
+def list_scanned_hosts():
+    """Lista todos os hosts já auditados, com a data do scan mais recente."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT host, MAX(created_at) as last_scan, COUNT(*) as total "
+            "FROM scan_findings GROUP BY host ORDER BY last_scan DESC"
         ).fetchall()
