@@ -10,12 +10,13 @@ import threading
 import time
 
 from agents.nexus_agent import build_agent, _detector
-from config import CREATOR_NAME, MONITOR_POLL_INTERVAL
+from config import ALERT_COOLDOWN_SECONDS, CREATOR_NAME, MONITOR_POLL_INTERVAL
 from database.db import init_db, log_event
 from memory import memory_store
 
 _agent = None
 _lock = threading.Lock()
+_last_alerted: dict[str, float] = {}
 
 
 def get_agent():
@@ -41,13 +42,19 @@ def monitor_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
             suspects = _detector.sample()
-            if suspects:
-                for ip in suspects:
+            now = time.time()
+            new_suspects = [
+                ip for ip in suspects
+                if now - _last_alerted.get(ip, 0) >= ALERT_COOLDOWN_SECONDS
+            ]
+            if new_suspects:
+                for ip in new_suspects:
                     log_event("ddos_suspect", ip, "Limite de conexões excedido na janela de monitoramento")
+                    _last_alerted[ip] = now
                 alert = (
                     "ALERTA AUTOMÁTICO DO MONITOR DE REDE: os seguintes IPs excederam o "
                     f"limite de conexões na janela de monitoramento e são suspeitos de DDoS: "
-                    f"{', '.join(suspects)}. Avalie e decida se deve isolá-los, explicando o motivo."
+                    f"{', '.join(new_suspects)}. Avalie e decida se deve isolá-los, explicando o motivo."
                 )
                 print(f"\n[Nexus] Anomalia detectada, analisando...")
                 reply = ask_agent(alert)
