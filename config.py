@@ -21,3 +21,25 @@ PF_ANCHOR_NAME = "nexus_defense"
 
 SSH_USER = os.getenv("SSH_USER", "")
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
+
+# Allowlist de comandos remotos via SSH. Apenas comandos de diagnóstico
+# read-only por padrão — nada que altere estado do host remoto. Para liberar
+# mais, defina SSH_EXTRA_ALLOWED_PATTERNS no .env com regexes separados por "|".
+SSH_ALLOWED_PATTERNS = [
+    r"^docker ps( -a)?$",
+    r"^docker (logs|inspect) [\w.-]+$",
+    r"^systemctl status [\w@.-]+$",
+    r"^service [\w@.-]+ status$",
+    r"^uptime$",
+    r"^df -h$",
+    r"^free -h$",
+    r"^whoami$",
+    r"^uname -a$",
+    r"^ps aux$",
+    r"^netstat -tulpn$",
+    r"^ss -tulpn$",
+    r"^cat /etc/os-release$",
+    r"^tail -n \d+ [\w./-]+$",
+]
+if os.getenv("SSH_EXTRA_ALLOWED_PATTERNS"):
+    SSH_ALLOWED_PATTERNS += os.getenv("SSH_EXTRA_ALLOWED_PATTERNS").split("|")
