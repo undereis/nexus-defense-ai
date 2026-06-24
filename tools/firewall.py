@@ -86,3 +86,20 @@ def list_blocked() -> str:
     if result.returncode != 0:
         return f"Falha ao listar bloqueios: {result.stderr.strip()}"
     return result.stdout.strip() or "Nenhum IP bloqueado atualmente."
+
+
+def get_actual_blocked_ips() -> set[str] | None:
+    """Lê o estado REAL da tabela no kernel (não o que o banco acha que
+    está bloqueado). Retorna None se não conseguir consultar (ex: anchor
+    não configurado), para o caller distinguir "vazio" de "erro"."""
+    result = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "show"])
+    if result.returncode != 0:
+        return None
+    ips = set()
+    for line in result.stdout.splitlines():
+        candidate = line.strip()
+        try:
+            ips.add(_validate_ip(candidate))
+        except ValueError:
+            continue
+    return ips

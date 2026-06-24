@@ -17,6 +17,7 @@ from config import (
     CREATOR_NAME,
     MONITOR_POLL_INTERVAL,
     PROACTIVE_AUDIT_POLL_INTERVAL,
+    RECONCILE_POLL_INTERVAL,
 )
 from database.db import (
     get_findings_for_host,
@@ -28,6 +29,7 @@ from database.db import (
 from tools import firewall
 from tools.policy import classify_threats
 from tools.proactive import check_asset, get_due_assets
+from tools.reconcile import check_and_reconcile, describe
 from tools.threat_intel import is_repeat_offender
 
 _last_alerted: dict[str, float] = {}
@@ -126,6 +128,24 @@ def proactive_audit_loop(stop_event: threading.Event):
         stop_event.wait(PROACTIVE_AUDIT_POLL_INTERVAL)
 
 
+def reconcile_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            result = check_and_reconcile(auto_reapply=True)
+            if result.has_drift:
+                description = describe(result)
+                log_event("firewall_drift", None, description)
+                print(f"\n[Nexus] {description}\n> ", end="", flush=True)
+                ask_agent(
+                    "ALERTA: detectei e corrigi divergência entre o que eu achava que estava "
+                    f"bloqueado e o estado real do firewall.\n\n{description}\n\n"
+                    "Resuma o que aconteceu e por que isso é importante."
+                )
+        except Exception as exc:
+            log_event("reconcile_error", None, str(exc))
+        stop_event.wait(RECONCILE_POLL_INTERVAL)
+
+
 def main():
     init_db()
     print("=== Nexus Defense AI ===")
@@ -139,6 +159,8 @@ def main():
         target=proactive_audit_loop, args=(stop_event,), daemon=True
     )
     proactive_thread.start()
+    reconcile_thread = threading.Thread(target=reconcile_loop, args=(stop_event,), daemon=True)
+    reconcile_thread.start()
 
     try:
         while True:
