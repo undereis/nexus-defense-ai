@@ -16,7 +16,7 @@ from database.db import (
     record_finding,
     record_threat_isolation,
 )
-from tools import access, audit, firewall, proactive, recon, reconcile, threat_intel
+from tools import access, audit, firewall, notify, proactive, recon, reconcile, threat_intel
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
@@ -211,6 +211,17 @@ def check_audit_integrity() -> str:
 
 
 @tool
+def send_test_notification() -> str:
+    """Envia uma notificação de teste para o webhook externo configurado
+    (Slack/Discord/custom), para confirmar que os alertas autônomos vão
+    chegar até o criador mesmo quando ele não estiver olhando o terminal."""
+    if not notify.is_configured():
+        return "Nenhum webhook configurado (NOTIFY_WEBHOOK_URL ausente no .env)."
+    ok = notify.send_notification("Nexus: teste de notificação", "Se você está vendo isso, está funcionando.")
+    return "Notificação enviada com sucesso." if ok else "Falha ao enviar — verifique a URL do webhook."
+
+
+@tool
 def curl_request(url: str) -> str:
     """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
     status, headers e um trecho do corpo da resposta. Use para inspecionar
@@ -259,6 +270,7 @@ TOOLS = [
     list_monitored_assets,
     check_firewall_integrity,
     check_audit_integrity,
+    send_test_notification,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -315,6 +327,11 @@ Sua missão:
     Se {CREATOR_NAME} perguntar se pode confiar no seu histórico, ou se
     você mesma notar algo estranho no log, verifique a integridade antes
     de responder.
+12. Suas ações autônomas mais importantes (isolamento automático, drift
+    de firewall, mudança em auditoria proativa) já são empurradas para um
+    webhook externo, se {CREATOR_NAME} configurou um — então mesmo longe
+    do terminal ele fica sabendo. Se ele perguntar se as notificações
+    estão funcionando, use send_test_notification.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar

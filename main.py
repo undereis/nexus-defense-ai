@@ -27,6 +27,7 @@ from database.db import (
     record_threat_isolation,
 )
 from tools import firewall
+from tools.notify import send_notification
 from tools.policy import classify_threats
 from tools.proactive import check_asset, get_due_assets
 from tools.reconcile import check_and_reconcile, describe
@@ -75,6 +76,7 @@ def monitor_loop(stop_event: threading.Event):
                 result = firewall.block_ip(ip, reason)
                 record_threat_isolation(ip)
                 print(f"\n[Nexus] AÇÃO AUTOMÁTICA: {result} ({reason})\n> ", end="", flush=True)
+                send_notification("Nexus: IP isolado automaticamente", f"{ip} — {reason}\n{result}")
 
                 prior_findings = get_findings_for_host(ip, limit=3)
                 findings_note = (
@@ -115,6 +117,10 @@ def proactive_audit_loop(stop_event: threading.Event):
                 if changed:
                     print(f"\n[Nexus] Auditoria proativa detectou mudança em {host}, analisando...")
                     log_event("proactive_audit_changed", host, "Achado diferente do último scan")
+                    send_notification(
+                        "Nexus: mudança detectada em auditoria proativa",
+                        f"Host: {host}\n\n{summary[:500]}",
+                    )
                     reply = ask_agent(
                         f"AUDITORIA PROATIVA: reauditei {host} (monitoramento automático que você "
                         f"autorizou) e o resultado mudou desde a última vez. Novo resultado:\n\n"
@@ -136,6 +142,7 @@ def reconcile_loop(stop_event: threading.Event):
                 description = describe(result)
                 log_event("firewall_drift", None, description)
                 print(f"\n[Nexus] {description}\n> ", end="", flush=True)
+                send_notification("Nexus: drift detectado no firewall", description)
                 ask_agent(
                     "ALERTA: detectei e corrigi divergência entre o que eu achava que estava "
                     f"bloqueado e o estado real do firewall.\n\n{description}\n\n"
