@@ -57,6 +57,15 @@ def check_threat_history(ip: str) -> str:
 
 
 @tool
+def correlate_threat(ip: str) -> str:
+    """Cruza o histórico de ataque de um IP com qualquer auditoria de
+    segurança (nmap/nikto/ssl/headers) já feita nesse mesmo endereço. Use
+    isso para decisões importantes: se o IP que está atacando também já
+    foi auditado antes, você sabe o que ele tem de exposto."""
+    return threat_intel.correlate(ip)
+
+
+@tool
 def list_known_attackers() -> str:
     """Lista todos os IPs com histórico de ataque registrado, do mais
     reincidente ao menos, com base na memória de longo prazo da Nexus."""
@@ -199,6 +208,7 @@ TOOLS = [
     check_ssh_availability,
     run_remote_command,
     check_threat_history,
+    correlate_threat,
     list_known_attackers,
     get_scan_history,
     list_audited_hosts,

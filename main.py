@@ -17,7 +17,13 @@ from config import (
     CREATOR_NAME,
     MONITOR_POLL_INTERVAL,
 )
-from database.db import init_db, log_event, record_threat_flag, record_threat_isolation
+from database.db import (
+    get_findings_for_host,
+    init_db,
+    log_event,
+    record_threat_flag,
+    record_threat_isolation,
+)
 from tools import firewall
 from tools.policy import classify_threats
 from tools.threat_intel import is_repeat_offender
@@ -65,10 +71,18 @@ def monitor_loop(stop_event: threading.Event):
                 result = firewall.block_ip(ip, reason)
                 record_threat_isolation(ip)
                 print(f"\n[Nexus] AÇÃO AUTOMÁTICA: {result} ({reason})\n> ", end="", flush=True)
+
+                prior_findings = get_findings_for_host(ip, limit=3)
+                findings_note = (
+                    f" Já existem {len(prior_findings)} auditoria(s) de segurança prévia(s) "
+                    f"registrada(s) para esse IP — use correlate_threat para checar."
+                    if prior_findings
+                    else ""
+                )
                 ask_agent(
                     f"AVISO: acabei de isolar automaticamente o IP {ip} ({reason}), "
-                    "pois estava muito acima do limite configurado. Confirme que está "
-                    "registrado e me explique resumidamente o que foi feito."
+                    "pois estava muito acima do limite configurado." + findings_note +
+                    " Confirme que está registrado e me explique resumidamente o que foi feito."
                 )
 
             # Caminho normal: ameaça moderada continua sendo avaliada pelo agente.
