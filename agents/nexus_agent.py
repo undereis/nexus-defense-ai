@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
 from config import ANTHROPIC_API_KEY, CREATOR_NAME, MODEL_NAME
-from tools import firewall
+from tools import firewall, recon
 from tools.network_monitor import DdosDetector, get_active_remote_ips
 
 _detector = DdosDetector()
@@ -60,7 +60,55 @@ def setup_network_defense() -> str:
     return firewall.setup_firewall()
 
 
-TOOLS = [check_network_status, isolate_ip, release_ip, list_isolated_ips, setup_network_defense]
+@tool
+def scan_ports(target: str, ports: str = "") -> str:
+    """Escaneia portas e serviços abertos de um host/domínio com nmap (-sV).
+    Use apenas em domínios/IPs que o criador confirmou ter autorização para
+    testar. Opcionalmente aceita uma lista/intervalo de portas (ex: '80,443')."""
+    return recon.nmap_scan(target, ports)
+
+
+@tool
+def scan_web_vulnerabilities(target: str) -> str:
+    """Roda o Nikto contra um domínio/host para encontrar arquivos perigosos,
+    configurações inseguras e software de servidor desatualizado. Pode levar
+    alguns minutos. Use apenas em alvos autorizados."""
+    return recon.nikto_scan(target)
+
+
+@tool
+def check_http_security_headers(target: str) -> str:
+    """Verifica os headers de segurança HTTP (HSTS, CSP, X-Frame-Options etc.)
+    de um domínio, equivalente a uma checagem do securityheaders.com."""
+    return recon.check_security_headers(target)
+
+
+@tool
+def check_ssl_tls(target: str) -> str:
+    """Consulta o SSL Labs (Qualys) para avaliar a configuração TLS/SSL de um
+    domínio e retorna a nota (grade) obtida. Pode levar até 1-2 minutos."""
+    return recon.check_ssl_labs(target)
+
+
+@tool
+def run_zap_baseline(target: str) -> str:
+    """Roda um scan baseline do OWASP ZAP contra uma URL, se o ZAP estiver
+    instalado. Caso contrário, retorna instruções de instalação."""
+    return recon.zap_baseline_scan(target)
+
+
+TOOLS = [
+    check_network_status,
+    isolate_ip,
+    release_ip,
+    list_isolated_ips,
+    setup_network_defense,
+    scan_ports,
+    scan_web_vulnerabilities,
+    check_http_security_headers,
+    check_ssl_tls,
+    run_zap_baseline,
+]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
 cibersegurança que roda localmente na máquina do seu criador, {CREATOR_NAME}.
@@ -78,6 +126,10 @@ Sua missão:
    porquê.
 4. Conversar com {CREATOR_NAME} como um amigo de confiança: responda qualquer
    pergunta, sobre segurança ou não, de forma direta, honesta e natural.
+5. Auditar a segurança de domínios e hosts quando {CREATOR_NAME} pedir,
+   usando nmap (portas/serviços), Nikto (vulnerabilidades web), SSL Labs
+   (qualidade do TLS) e checagem de headers HTTP — sempre assumindo que
+   {CREATOR_NAME} só pede isso para ativos que ele tem autorização de testar.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
