@@ -10,7 +10,7 @@ import ipaddress
 import subprocess
 
 from config import PF_ANCHOR_NAME
-from database.db import record_blocked_ip, remove_blocked_ip
+from database.db import log_event, record_blocked_ip, remove_blocked_ip
 
 ANCHOR_FILE = f"/etc/pf.anchors/{PF_ANCHOR_NAME}"
 PF_CONF = "/etc/pf.conf"
@@ -65,19 +65,25 @@ def setup_firewall() -> str:
 
 def block_ip(ip: str, reason: str = "") -> str:
     ip = _validate_ip(ip)
+    log_event("firewall_block_attempt", ip, f"reason={reason!r}", action_taken="executando")
     result = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "add", ip])
     if result.returncode != 0:
+        log_event("firewall_block_failed", ip, result.stderr.strip(), action_taken="falhou")
         return f"Falha ao bloquear {ip}: {result.stderr.strip()}"
     record_blocked_ip(ip, reason)
+    log_event("firewall_block_confirmed", ip, f"reason={reason!r}", action_taken="bloqueado")
     return f"IP {ip} isolado/bloqueado com sucesso."
 
 
 def unblock_ip(ip: str) -> str:
     ip = _validate_ip(ip)
+    log_event("firewall_unblock_attempt", ip, "", action_taken="executando")
     result = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "delete", ip])
     if result.returncode != 0:
+        log_event("firewall_unblock_failed", ip, result.stderr.strip(), action_taken="falhou")
         return f"Falha ao desbloquear {ip}: {result.stderr.strip()}"
     remove_blocked_ip(ip)
+    log_event("firewall_unblock_confirmed", ip, "", action_taken="desbloqueado")
     return f"IP {ip} desbloqueado."
 
 
