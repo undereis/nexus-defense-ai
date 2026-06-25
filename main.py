@@ -13,6 +13,8 @@ from agents.nexus_agent import _detector
 from agents.runtime import ask_agent
 from config import (
     ALERT_COOLDOWN_SECONDS,
+    ALLOW_ACTIVE_EXPLOITATION,
+    ALLOW_SOCIAL_ENGINEERING,
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
     MONITOR_POLL_INTERVAL,
@@ -157,6 +159,15 @@ def main():
     init_db()
     print("=== Nexus Defense AI ===")
     print(f"Online. Olá, {CREATOR_NAME}. Estou monitorando a rede em segundo plano.")
+    print(
+        f"Exploração ativa (Metasploit/Hydra/SQLMap): "
+        f"{'LIGADA' if ALLOW_ACTIVE_EXPLOITATION else 'desligada'} | "
+        f"Engenharia social: {'LIGADA' if ALLOW_SOCIAL_ENGINEERING else 'desligada'}"
+    )
+    print(
+        "Lembrete: mudanças no .env só valem depois de reiniciar este processo "
+        "('sair' + rodar de novo).\n"
+    )
     print("Digite 'sair' para encerrar.\n")
 
     stop_event = threading.Event()
