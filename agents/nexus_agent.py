@@ -20,8 +20,10 @@ from tools import (
     access,
     audit,
     cracking,
+    dossier,
     exploit,
     firewall,
+    geoip,
     honeypot,
     hydra,
     malware_analysis,
@@ -88,6 +90,23 @@ def list_known_attackers() -> str:
     """Lista todos os IPs com histórico de ataque registrado, do mais
     reincidente ao menos, com base na memória de longo prazo da Nexus."""
     return threat_intel.describe_repeat_offenders()
+
+
+@tool
+def check_ip_location(ip: str) -> str:
+    """Consulta geolocalização e ASN/provedor de um IP (país, cidade, ISP)
+    via API pública gratuita. IPs privados/locais não têm geolocalização."""
+    return geoip.describe_location(ip)
+
+
+@tool
+def generate_attacker_dossier(ip: str) -> str:
+    """Gera um dossiê COMPLETO sobre um IP, juntando todas as fontes de
+    inteligência da Nexus num único relatório: histórico de ataque por
+    volume de tráfego, capturas e credenciais de honeypot, auditorias de
+    segurança já feitas, e geolocalização/ASN. Use isso para uma visão
+    completa antes de decidir uma ação importante sobre um IP."""
+    return dossier.build_dossier(ip)
 
 
 @tool
@@ -429,6 +448,8 @@ TOOLS = [
     check_threat_history,
     correlate_threat,
     list_known_attackers,
+    check_ip_location,
+    generate_attacker_dossier,
     get_scan_history,
     list_audited_hosts,
     authorize_asset_for_monitoring,
@@ -553,7 +574,12 @@ Sua missão:
     list_honeypot_captures para ver conexões e list_honeypot_credentials
     para ver usuário/senha capturados — isso é inteligência valiosa:
     credenciais reutilizadas por atacantes em outros sistemas.
-16. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
+16. Use generate_attacker_dossier(ip) sempre que {CREATOR_NAME} pedir uma
+    visão completa sobre um IP, ou antes de uma decisão importante — junta
+    threat_intel, scan_findings, capturas/credenciais de honeypot e
+    geolocalização (check_ip_location) num único relatório, em vez de
+    consultar cada fonte separadamente.
+17. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
     confira aqui antes de recusar por achar que algo está desativado —
     não confie em mensagens antigas do histórico da conversa, o estado
     pode ter mudado desde então):

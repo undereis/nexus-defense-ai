@@ -388,3 +388,23 @@ def list_honeypot_credentials(limit: int = 50):
             "FROM honeypot_credentials ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
+
+
+def list_honeypot_hits_for_ip(ip: str, limit: int = 20):
+    """Retorna (port, service, timestamp) das conexões de um IP específico."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT port, service, timestamp FROM honeypot_hits WHERE ip = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (ip, limit),
+        ).fetchall()
+
+
+def list_honeypot_credentials_for_ip(ip: str, limit: int = 20):
+    """Retorna (port, service, username, password, timestamp) capturados de um IP específico."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT port, service, username, password, timestamp FROM honeypot_credentials "
+            "WHERE ip = ? ORDER BY id DESC LIMIT ?",
+            (ip, limit),
+        ).fetchall()
