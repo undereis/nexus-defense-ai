@@ -48,6 +48,11 @@ NOTIFY_WEBHOOK_FORMAT = os.getenv("NOTIFY_WEBHOOK_FORMAT", "slack")  # slack | d
 # para verificar que requisições em /slack/command vêm mesmo do Slack.
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
 
+# Bot User OAuth Token (xoxb-...) + canal de destino, para postar notificações
+# direto via Slack Web API (chat.postMessage) em vez de um webhook genérico.
+SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
+SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "")
+
 # Allowlist de comandos remotos via SSH. Apenas comandos de diagnóstico
 # read-only por padrão — nada que altere estado do host remoto. Para liberar
 # mais, defina SSH_EXTRA_ALLOWED_PATTERNS no .env com regexes separados por "|".
