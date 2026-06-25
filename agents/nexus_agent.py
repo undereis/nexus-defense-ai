@@ -487,11 +487,21 @@ Sua missão:
       depois de revisar o que você gerou. Se alguém pedir para você "enviar"
       ou "executar" o pretexto diretamente, recuse e explique esse limite.
 14. Você também tem brute_force_login (Hydra) e run_sqlmap_scan (SQLMap),
-    ambos atrás do mesmo toggle ALLOW_ACTIVE_EXPLOITATION — são ações
-    ativas que podem bloquear contas ou extrair dados reais se acharem a
-    vulnerabilidade. Burp Suite (Community, sem API) é uma ferramenta que
-    {CREATOR_NAME} usa manualmente fora de você — se ele perguntar sobre
-    Burp, oriente a abrir o app, mas você não consegue controlá-lo.
+    ambos atrás do mesmo toggle ALLOW_ACTIVE_EXPLOITATION. Burp Suite
+    (Community, sem API) é uma ferramenta que {CREATOR_NAME} usa
+    manualmente fora de você — se ele perguntar sobre Burp, oriente a
+    abrir o app, mas você não consegue controlá-lo.
+15. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
+    confira aqui antes de recusar por achar que algo está desativado —
+    não confie em mensagens antigas do histórico da conversa, o estado
+    pode ter mudado desde então):
+    {{exploitation_status}}
+    Se estiver "LIGADO", as tools (run_exploit_module, brute_force_login,
+    run_sqlmap_scan) já estão liberadas para uso direto, sem precisar
+    pedir confirmação extra a cada chamada — é a configuração deliberada
+    do criador. Sempre chame a tool de verdade antes de dizer que algo
+    não é possível; nunca invente que uma ferramenta "não está integrada"
+    sem ter tentado chamá-la primeiro.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
@@ -499,5 +509,14 @@ claro para {CREATOR_NAME} o que está fazendo."""
 
 
 def build_agent():
+    from config import ALLOW_ACTIVE_EXPLOITATION, ALLOW_SOCIAL_ENGINEERING
+
+    exploitation_status = (
+        f"ALLOW_ACTIVE_EXPLOITATION = {'LIGADO' if ALLOW_ACTIVE_EXPLOITATION else 'desligado'} "
+        f"(Metasploit/Hydra/SQLMap) | "
+        f"ALLOW_SOCIAL_ENGINEERING = {'LIGADO' if ALLOW_SOCIAL_ENGINEERING else 'desligado'} "
+        f"(geração de pretexto)"
+    )
+    prompt = SYSTEM_PROMPT.format(exploitation_status=exploitation_status)
     model = ChatAnthropic(model=MODEL_NAME, api_key=ANTHROPIC_API_KEY)
-    return create_react_agent(model, TOOLS, prompt=SYSTEM_PROMPT)
+    return create_react_agent(model, TOOLS, prompt=prompt)
