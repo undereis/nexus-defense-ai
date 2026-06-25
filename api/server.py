@@ -8,14 +8,17 @@ Rodar: ./venv/bin/uvicorn api.server:app --host 127.0.0.1 --port 8000
 """
 
 import secrets
+from urllib.parse import parse_qs
 
-from fastapi import Depends, FastAPI, HTTPException, Security
+import requests
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from agents.runtime import ask_agent
-from config import API_TOKEN
+from config import API_TOKEN, SLACK_SIGNING_SECRET
 from database.db import init_db
+from tools.slack_verify import verify_signature
 
 app = FastAPI(title="Nexus Defense AI", version="0.1.0")
 
@@ -62,3 +65,42 @@ def chat(req: ChatRequest):
         raise HTTPException(status_code=400, detail="Mensagem vazia.")
     reply = ask_agent(req.message)
     return ChatResponse(reply=reply)
+
+
+def _answer_and_callback(text: str, response_url: str):
+    try:
+        reply = ask_agent(text)
+    except Exception as exc:
+        reply = f"Tive um erro processando isso: {exc}"
+    try:
+        requests.post(response_url, json={"response_type": "in_channel", "text": reply}, timeout=10)
+    except requests.RequestException:
+        pass  # melhor falhar silenciosamente aqui do que derrubar o background task
+
+
+@app.post("/slack/command")
+async def slack_command(request: Request, background_tasks: BackgroundTasks):
+    """Slash command do Slack (ex: /nexus qual o status da rede?). Slack
+    exige resposta em até 3s, então respondemos na hora e processamos a
+    pergunta de verdade em segundo plano, entregando via response_url."""
+    if not SLACK_SIGNING_SECRET:
+        raise HTTPException(status_code=503, detail="SLACK_SIGNING_SECRET não configurado.")
+
+    raw_body = (await request.body()).decode("utf-8")
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+
+    if not verify_signature(SLACK_SIGNING_SECRET, timestamp, raw_body, signature):
+        raise HTTPException(status_code=401, detail="Assinatura inválida.")
+
+    fields = parse_qs(raw_body)
+    text = (fields.get("text") or [""])[0]
+    response_url = (fields.get("response_url") or [""])[0]
+
+    if not text.strip():
+        return {"response_type": "ephemeral", "text": "Manda uma pergunta ou comando depois do /nexus."}
+    if not response_url:
+        raise HTTPException(status_code=400, detail="response_url ausente.")
+
+    background_tasks.add_task(_answer_and_callback, text, response_url)
+    return {"response_type": "ephemeral", "text": f"🔄 Processando: \"{text}\"..."}

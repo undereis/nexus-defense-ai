@@ -44,6 +44,10 @@ API_TOKEN = os.getenv("NEXUS_API_TOKEN", "")
 NOTIFY_WEBHOOK_URL = os.getenv("NOTIFY_WEBHOOK_URL", "")
 NOTIFY_WEBHOOK_FORMAT = os.getenv("NOTIFY_WEBHOOK_FORMAT", "slack")  # slack | discord | raw
 
+# Signing secret do Slack app (Basic Information -> Signing Secret), usado
+# para verificar que requisições em /slack/command vêm mesmo do Slack.
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+
 # Allowlist de comandos remotos via SSH. Apenas comandos de diagnóstico
 # read-only por padrão — nada que altere estado do host remoto. Para liberar
 # mais, defina SSH_EXTRA_ALLOWED_PATTERNS no .env com regexes separados por "|".
