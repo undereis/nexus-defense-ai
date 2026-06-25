@@ -240,26 +240,35 @@ def create_audit_checkpoint() -> str:
 
 
 @tool
-def start_honeypot(port: int = 0) -> str:
-    """Inicia uma porta-armadilha (honeypot): qualquer IP que conectar
-    nela é tratado como ataque confirmado e isolado automaticamente,
-    sem precisar de threshold — ninguém deveria conectar numa porta que
-    não serve propósito real. Se port=0, usa a porta padrão configurada."""
-    from config import HONEYPOT_PORT
-    return honeypot.start(port or HONEYPOT_PORT)
+def start_honeypot(service: str = "ssh", port: int = 0) -> str:
+    """Inicia uma porta-armadilha (honeypot) de um serviço específico:
+    'ssh' (banner falso), 'ftp' (captura usuário/senha reais digitados),
+    ou 'http' (página de login falsa, captura usuário/senha do POST).
+    Qualquer IP que conectar é tratado como ataque confirmado e isolado
+    automaticamente, sem threshold. Se port=0, usa a porta padrão."""
+    return honeypot.start(service, port)
 
 
 @tool
-def stop_honeypot() -> str:
-    """Para o honeypot, se estiver rodando."""
-    return honeypot.stop()
+def stop_honeypot(service: str = "", port: int = 0) -> str:
+    """Para honeypot(s). Sem argumentos, para todos os honeypots ativos.
+    Com service e/ou port, para só o(s) que combinar com os critérios."""
+    return honeypot.stop(service or None, port or None)
 
 
 @tool
 def list_honeypot_captures() -> str:
-    """Lista os IPs que conectaram na porta-armadilha (honeypot), do mais
-    recente ao mais antigo, e se o honeypot está ativo agora."""
+    """Lista os IPs que conectaram nas portas-armadilha (honeypot), do mais
+    recente ao mais antigo, e quais honeypots estão ativos agora."""
     return honeypot.describe_hits()
+
+
+@tool
+def list_honeypot_credentials() -> str:
+    """Lista as credenciais (usuário/senha) que atacantes digitaram de
+    verdade nos honeypots FTP/HTTP — inteligência mais rica que só saber
+    que alguém conectou: agora sabemos o que ele tentou usar para entrar."""
+    return honeypot.describe_credentials()
 
 
 @tool
@@ -431,6 +440,7 @@ TOOLS = [
     start_honeypot,
     stop_honeypot,
     list_honeypot_captures,
+    list_honeypot_credentials,
     send_test_notification,
     run_exploit_module,
     crack_password_hashcat,
@@ -534,13 +544,15 @@ Sua missão:
     (Community, sem API) é uma ferramenta que {CREATOR_NAME} usa
     manualmente fora de você — se ele perguntar sobre Burp, oriente a
     abrir o app, mas você não consegue controlá-lo.
-15. Você pode rodar um HONEYPOT (start_honeypot): uma porta-armadilha que
-    não serve propósito real. Qualquer IP que conectar nela é evidência
-    direta de varredura/ataque — diferente da detecção por volume de
-    tráfego, aqui você isola o IP IMEDIATAMENTE e automaticamente, sem
-    threshold, sem pedir confirmação, porque não existe cenário legítimo
-    de alguém conectar numa porta-armadilha por acidente. Use
-    list_honeypot_captures para ver o que já foi pego.
+15. Você pode rodar HONEYPOTS de 3 tipos (start_honeypot): 'ssh' (banner
+    falso), 'ftp' e 'http' (esses dois capturam usuário/senha reais que
+    o atacante digitar). Qualquer IP que conectar é evidência direta de
+    varredura/ataque — diferente da detecção por volume de tráfego, aqui
+    você isola o IP IMEDIATAMENTE e automaticamente, sem threshold, sem
+    pedir confirmação (exceto loopback, nunca isolado). Use
+    list_honeypot_captures para ver conexões e list_honeypot_credentials
+    para ver usuário/senha capturados — isso é inteligência valiosa:
+    credenciais reutilizadas por atacantes em outros sistemas.
 16. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
     confira aqui antes de recusar por achar que algo está desativado —
     não confie em mensagens antigas do histórico da conversa, o estado

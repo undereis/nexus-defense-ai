@@ -74,10 +74,23 @@ CREATE TABLE IF NOT EXISTS honeypot_hits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ip TEXT NOT NULL,
     port INTEGER NOT NULL,
+    service TEXT NOT NULL DEFAULT 'ssh',
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_honeypot_hits_ip ON honeypot_hits(ip);
+
+CREATE TABLE IF NOT EXISTS honeypot_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    service TEXT NOT NULL,
+    username TEXT,
+    password TEXT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_honeypot_credentials_ip ON honeypot_credentials(ip);
 """
 
 
@@ -101,6 +114,10 @@ def init_db():
                 conn.execute(f"ALTER TABLE events ADD COLUMN {column}")
             except sqlite3.OperationalError:
                 pass  # coluna já existe
+        try:
+            conn.execute("ALTER TABLE honeypot_hits ADD COLUMN service TEXT NOT NULL DEFAULT 'ssh'")
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
 
 
 def _compute_entry_hash(prev_hash: str, timestamp: str, event_type: str,
@@ -322,23 +339,23 @@ def get_latest_audit_checkpoint():
         ).fetchone()
 
 
-def record_honeypot_hit(ip: str, port: int):
+def record_honeypot_hit(ip: str, port: int, service: str = "ssh"):
     """Registra que um IP conectou na porta-armadilha — diferente da
     detecção por volume de tráfego, isto é praticamente prova direta de
     varredura/ataque, já que nenhum cliente legítimo deveria conectar
     nessa porta."""
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO honeypot_hits (ip, port) VALUES (?, ?)",
-            (ip, port),
+            "INSERT INTO honeypot_hits (ip, port, service) VALUES (?, ?, ?)",
+            (ip, port, service),
         )
 
 
 def list_honeypot_hits(limit: int = 20):
-    """Retorna (ip, port, timestamp) das conexões mais recentes na armadilha."""
+    """Retorna (ip, port, service, timestamp) das conexões mais recentes na armadilha."""
     with get_conn() as conn:
         return conn.execute(
-            "SELECT ip, port, timestamp FROM honeypot_hits ORDER BY id DESC LIMIT ?",
+            "SELECT ip, port, service, timestamp FROM honeypot_hits ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
 
@@ -349,3 +366,25 @@ def count_honeypot_hits(ip: str) -> int:
             "SELECT COUNT(*) FROM honeypot_hits WHERE ip = ?", (ip,)
         ).fetchone()
         return row[0] if row else 0
+
+
+def record_honeypot_credential(ip: str, port: int, service: str, username: str | None, password: str | None):
+    """Registra usuário/senha que um atacante digitou de verdade no
+    honeypot — inteligência muito mais rica que só saber que ele
+    conectou: agora sabemos o que ele tentou usar."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO honeypot_credentials (ip, port, service, username, password) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (ip, port, service, username, password),
+        )
+
+
+def list_honeypot_credentials(limit: int = 50):
+    """Retorna (ip, port, service, username, password, timestamp) capturados."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, port, service, username, password, timestamp "
+            "FROM honeypot_credentials ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()

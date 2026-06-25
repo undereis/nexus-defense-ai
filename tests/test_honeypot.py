@@ -19,8 +19,7 @@ def honeypot_module(monkeypatch, tmp_path):
     monkeypatch.setattr(honeypot, "record_threat_isolation", lambda ip: None)
     monkeypatch.setattr(honeypot.notify, "send_notification", lambda *a, **k: True)
     yield honeypot, dbmod
-    if honeypot.is_running():
-        honeypot.stop()
+    honeypot.stop()
 
 
 def _free_port() -> int:
@@ -39,27 +38,44 @@ def test_not_running_initially(honeypot_module):
 def test_start_and_stop(honeypot_module):
     honeypot, _ = honeypot_module
     port = _free_port()
-    result = honeypot.start(port)
+    result = honeypot.start("ssh", port)
     assert "iniciado" in result
     assert honeypot.is_running() is True
 
-    stop_result = honeypot.stop()
+    stop_result = honeypot.stop("ssh", port)
     assert "parado" in stop_result.lower()
+    time.sleep(0.2)
     assert honeypot.is_running() is False
 
 
 def test_starting_twice_is_idempotent(honeypot_module):
     honeypot, _ = honeypot_module
     port = _free_port()
-    honeypot.start(port)
-    second = honeypot.start(port)
+    honeypot.start("ssh", port)
+    second = honeypot.start("ssh", port)
     assert "já está rodando" in second
 
 
-def test_connection_is_recorded_and_isolated(honeypot_module):
+def test_rejects_unsupported_service(honeypot_module):
+    honeypot, _ = honeypot_module
+    result = honeypot.start("telnet", 12345)
+    assert "não suportado" in result
+
+
+def test_multiple_services_run_simultaneously(honeypot_module):
+    honeypot, _ = honeypot_module
+    ssh_port, ftp_port = _free_port(), _free_port()
+    honeypot.start("ssh", ssh_port)
+    honeypot.start("ftp", ftp_port)
+    running = set(honeypot.list_running())
+    assert ("ssh", ssh_port) in running
+    assert ("ftp", ftp_port) in running
+
+
+def test_ssh_connection_is_recorded_and_isolated(honeypot_module):
     honeypot, dbmod = honeypot_module
     port = _free_port()
-    honeypot.start(port)
+    honeypot.start("ssh", port)
     time.sleep(0.2)
 
     client = socket.create_connection(("127.0.0.1", port), timeout=2)
@@ -71,6 +87,7 @@ def test_connection_is_recorded_and_isolated(honeypot_module):
     assert len(hits) == 1
     assert hits[0][0] == "127.0.0.1"
     assert hits[0][1] == port
+    assert hits[0][2] == "ssh"
 
 
 def test_describe_hits_when_empty(honeypot_module):
@@ -81,7 +98,7 @@ def test_describe_hits_when_empty(honeypot_module):
 
 def test_describe_hits_after_capture(honeypot_module):
     honeypot, dbmod = honeypot_module
-    dbmod.record_honeypot_hit("9.9.9.9", 2222)
+    dbmod.record_honeypot_hit("9.9.9.9", 2222, "ssh")
     result = honeypot.describe_hits()
     assert "9.9.9.9" in result
 
@@ -104,7 +121,7 @@ def test_loopback_connection_is_recorded_but_not_isolated(honeypot_module, monke
     monkeypatch.setattr(honeypot.firewall, "block_ip", lambda ip, reason: blocked.append(ip))
 
     port = _free_port()
-    honeypot.start(port)
+    honeypot.start("ssh", port)
     time.sleep(0.2)
 
     client = socket.create_connection(("127.0.0.1", port), timeout=2)
@@ -114,3 +131,100 @@ def test_loopback_connection_is_recorded_but_not_isolated(honeypot_module, monke
 
     assert len(dbmod.list_honeypot_hits()) == 1
     assert blocked == []  # nunca chamou block_ip para loopback
+
+
+def test_ftp_captures_credentials(honeypot_module):
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("ftp", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    client.recv(256)  # banner 220
+    client.sendall(b"USER admin\r\n")
+    client.recv(256)  # 331 password required
+    client.sendall(b"PASS senha123\r\n")
+    client.recv(256)  # 530 login incorrect
+    client.close()
+    time.sleep(0.3)
+
+    creds = dbmod.list_honeypot_credentials()
+    assert len(creds) == 1
+    ip, captured_port, service, username, password, _ts = creds[0]
+    assert ip == "127.0.0.1"
+    assert service == "ftp"
+    assert username == "admin"
+    assert password == "senha123"
+
+
+def test_ftp_captures_credentials_sent_in_single_packet(honeypot_module):
+    """Alguns clientes/scanners mandam USER e PASS de uma vez, sem esperar
+    a resposta intermediária do servidor — o parser precisa lidar com
+    múltiplas linhas chegando no mesmo recv()."""
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("ftp", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    client.recv(256)  # banner 220
+    client.sendall(b"USER root\r\nPASS toor\r\n")  # tudo de uma vez
+    time.sleep(0.3)
+    client.close()
+
+    creds = dbmod.list_honeypot_credentials()
+    assert len(creds) == 1
+    assert creds[0][3] == "root"
+    assert creds[0][4] == "toor"
+
+
+def test_http_login_page_served_on_get(honeypot_module):
+    honeypot, _ = honeypot_module
+    port = _free_port()
+    honeypot.start("http", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    client.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+    response = client.recv(4096)
+    client.close()
+
+    assert b"200 OK" in response
+    assert b"Admin Login" in response
+
+
+def test_http_captures_credentials_on_post(honeypot_module):
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("http", port)
+    time.sleep(0.2)
+
+    body = b"username=root&password=toor123"
+    request = (
+        b"POST / HTTP/1.1\r\nHost: x\r\nContent-Type: application/x-www-form-urlencoded\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+    )
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    client.sendall(request)
+    response = client.recv(4096)
+    client.close()
+    time.sleep(0.3)
+
+    assert b"401" in response
+    creds = dbmod.list_honeypot_credentials()
+    assert len(creds) == 1
+    assert creds[0][3] == "root"
+    assert creds[0][4] == "toor123"
+
+
+def test_describe_credentials_when_empty(honeypot_module):
+    honeypot, _ = honeypot_module
+    assert "Nenhuma credencial" in honeypot.describe_credentials()
+
+
+def test_describe_credentials_after_capture(honeypot_module):
+    honeypot, dbmod = honeypot_module
+    dbmod.record_honeypot_credential("1.2.3.4", 21, "ftp", "admin", "1234")
+    result = honeypot.describe_credentials()
+    assert "1.2.3.4" in result
+    assert "admin" in result

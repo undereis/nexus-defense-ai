@@ -129,3 +129,8 @@ AUDIT_CHECKPOINT_INTERVAL = int(os.getenv("AUDIT_CHECKPOINT_INTERVAL", "1800"))
 HONEYPOT_ENABLED = os.getenv("HONEYPOT_ENABLED", "false").lower() == "true"
 HONEYPOT_PORT = int(os.getenv("HONEYPOT_PORT", "2222"))
 HONEYPOT_BANNER = os.getenv("HONEYPOT_BANNER", "SSH-2.0-OpenSSH_7.4\r\n")
+
+# Lista de "service:port" para iniciar automaticamente quando HONEYPOT_ENABLED.
+# Padrão: só SSH na porta HONEYPOT_PORT. Para múltiplos serviços simultâneos,
+# defina ex: HONEYPOT_SERVICES=ssh:2222,ftp:2121,http:8081
+HONEYPOT_SERVICES = os.getenv("HONEYPOT_SERVICES", f"ssh:{HONEYPOT_PORT}")

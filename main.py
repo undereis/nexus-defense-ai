@@ -19,7 +19,7 @@ from config import (
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
     HONEYPOT_ENABLED,
-    HONEYPOT_PORT,
+    HONEYPOT_SERVICES,
     MONITOR_POLL_INTERVAL,
     PROACTIVE_AUDIT_POLL_INTERVAL,
     RECONCILE_POLL_INTERVAL,
@@ -176,7 +176,7 @@ def main():
         f"Exploração ativa (Metasploit/Hydra/SQLMap): "
         f"{'LIGADA' if ALLOW_ACTIVE_EXPLOITATION else 'desligada'} | "
         f"Engenharia social: {'LIGADA' if ALLOW_SOCIAL_ENGINEERING else 'desligada'} | "
-        f"Honeypot: {'LIGADO porta ' + str(HONEYPOT_PORT) if HONEYPOT_ENABLED else 'desligado'}"
+        f"Honeypot: {'LIGADO (' + HONEYPOT_SERVICES + ')' if HONEYPOT_ENABLED else 'desligado'}"
     )
     print(
         "Lembrete: mudanças no .env só valem depois de reiniciar este processo "
@@ -198,7 +198,9 @@ def main():
     )
     checkpoint_thread.start()
     if HONEYPOT_ENABLED:
-        print(honeypot.start(HONEYPOT_PORT))
+        for entry in HONEYPOT_SERVICES.split(","):
+            service, _, port_str = entry.strip().partition(":")
+            print(honeypot.start(service, int(port_str) if port_str else 0))
 
     try:
         while True:
