@@ -107,3 +107,11 @@ JOHN_TIMEOUT_SECONDS = int(os.getenv("JOHN_TIMEOUT_SECONDS", "300"))
 # nunca envia e-mail, SMS ou liga para ninguém — isso é sempre manual, feito
 # por você, depois de revisar o conteúdo gerado.
 ALLOW_SOCIAL_ENGINEERING = os.getenv("ALLOW_SOCIAL_ENGINEERING", "false").lower() == "true"
+
+# Hydra (brute force de credenciais) e SQLMap (injeção SQL automatizada)
+# são ações ativas contra um serviço/alvo ao vivo — podem gerar bloqueio
+# de conta, alertas de IDS, ou tráfego pesado mesmo em alvo autorizado.
+# Reaproveitam o mesmo toggle do Metasploit por serem da mesma categoria
+# de risco (ação ofensiva ativa, não só leitura/scan passivo).
+HYDRA_TIMEOUT_SECONDS = int(os.getenv("HYDRA_TIMEOUT_SECONDS", "300"))
+SQLMAP_TIMEOUT_SECONDS = int(os.getenv("SQLMAP_TIMEOUT_SECONDS", "300"))
