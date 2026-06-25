@@ -16,7 +16,21 @@ from database.db import (
     record_finding,
     record_threat_isolation,
 )
-from tools import access, audit, firewall, notify, proactive, recon, reconcile, threat_intel
+from tools import (
+    access,
+    audit,
+    cracking,
+    exploit,
+    firewall,
+    malware_analysis,
+    notify,
+    privesc,
+    proactive,
+    recon,
+    reconcile,
+    threat_intel,
+    web_injection,
+)
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
@@ -222,6 +236,62 @@ def send_test_notification() -> str:
 
 
 @tool
+def run_exploit_module(module: str, target: str, options: dict[str, str] | None = None) -> str:
+    """Roda um módulo do Metasploit (auxiliary/scanner ou exploit) contra um
+    alvo autorizado. Ex: module='auxiliary/scanner/ssh/ssh_version',
+    target='45.187.68.91'. PODE CAUSAR CRASH/INSTABILIDADE REAL no alvo,
+    mesmo autorizado. Só funciona se ALLOW_ACTIVE_EXPLOITATION=true no
+    .env; se desativado, explique isso ao criador em vez de insistir."""
+    return exploit.run_module(module, target, options)
+
+
+@tool
+def crack_password_hashcat(hash_file: str, hash_mode: str, wordlist: str, attack_mode: str = "0") -> str:
+    """Crackeia um arquivo de hash de senha (dentro de workdir/) usando
+    hashcat e uma wordlist (também em workdir/). hash_mode é o código do
+    hashcat (0=MD5, 1000=NTLM, 1800=sha512crypt, etc). Use apenas em
+    hashes que o criador tem autorização para analisar."""
+    return cracking.crack_with_hashcat(hash_file, hash_mode, wordlist, attack_mode)
+
+
+@tool
+def crack_password_john(hash_file: str, wordlist: str = "", hash_format: str = "") -> str:
+    """Crackeia um arquivo de hash de senha (em workdir/) usando John the
+    Ripper. Sem wordlist, usa o modo de regras padrão do John. Se a
+    primeira tentativa não encontrar nada e o hash for 'cru' (sem prefixo
+    identificador), tente de novo passando hash_format (ex: 'raw-md5',
+    'nt', 'sha512crypt' — ver `john --list=formats`)."""
+    return cracking.crack_with_john(hash_file, wordlist, hash_format)
+
+
+@tool
+def test_web_injection(url: str, param: str, payload_type: str = "both") -> str:
+    """Testa um parâmetro de URL contra payloads de SQLi e/ou XSS
+    (payload_type: 'sqli', 'xss' ou 'both'), procurando sinais de
+    vulnerabilidade na resposta. Não-destrutivo: só usa GET, nunca tenta
+    extrair dados reais. Use apenas em alvos autorizados."""
+    return web_injection.test_injection(url, param, payload_type)
+
+
+@tool
+def enumerate_privilege_escalation(host: str, user: str = "") -> str:
+    """Enumera vetores comuns de escalada de privilégio em um host
+    autorizado via SSH: sudo mal configurado, binários SUID, capabilities,
+    cron jobs como root. Tudo read-only — não tenta explorar nada, só
+    identifica o que pode ser explorável."""
+    return privesc.enumerate_privesc(host, user)
+
+
+@tool
+def analyze_suspicious_file(filename: str) -> str:
+    """Analisa ESTATICAMENTE um arquivo suspeito em workdir/ (hashes, tipo
+    real, strings suspeitas como URLs/comandos embutidos). NUNCA executa
+    o arquivo — é só leitura e inspeção. Use para triagem inicial antes de
+    decidir se vale enviar para uma sandbox completa ou VirusTotal."""
+    return malware_analysis.analyze_file(filename)
+
+
+@tool
 def curl_request(url: str) -> str:
     """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
     status, headers e um trecho do corpo da resposta. Use para inspecionar
@@ -271,6 +341,12 @@ TOOLS = [
     check_firewall_integrity,
     check_audit_integrity,
     send_test_notification,
+    run_exploit_module,
+    crack_password_hashcat,
+    crack_password_john,
+    test_web_injection,
+    enumerate_privilege_escalation,
+    analyze_suspicious_file,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -332,6 +408,23 @@ Sua missão:
     webhook externo, se {CREATOR_NAME} configurou um — então mesmo longe
     do terminal ele fica sabendo. Se ele perguntar se as notificações
     estão funcionando, use send_test_notification.
+13. Você também tem capacidades ofensivas avançadas, SEMPRE assumindo que
+    {CREATOR_NAME} só pede isso contra ativos que ele tem autorização
+    explícita para testar (pentest próprio ou autorizado):
+    - run_exploit_module (Metasploit): exploração ATIVA, pode causar crash
+      real no alvo. Só funciona se ALLOW_ACTIVE_EXPLOITATION=true; se
+      desativado, explique isso em vez de tentar contornar.
+    - crack_password_hashcat / crack_password_john: cracking de senha
+      sobre hashes que {CREATOR_NAME} colocou em workdir/.
+    - test_web_injection: teste não-destrutivo de SQLi/XSS (só GET, nunca
+      extrai dados reais).
+    - enumerate_privilege_escalation: enumeração read-only de vetores de
+      escalada de privilégio via SSH — não explora nada, só identifica.
+    - analyze_suspicious_file: análise ESTÁTICA de arquivo em workdir/,
+      nunca executa o arquivo.
+    Você NÃO tem e NUNCA deve simular ter capacidade de engenharia social
+    (phishing, pretexting, manipulação de pessoas) — isso foi
+    deliberadamente excluído do seu escopo.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
