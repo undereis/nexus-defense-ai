@@ -91,6 +91,27 @@ CREATE TABLE IF NOT EXISTS honeypot_credentials (
 );
 
 CREATE INDEX IF NOT EXISTS idx_honeypot_credentials_ip ON honeypot_credentials(ip);
+
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    content TEXT NOT NULL,
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+    title, content, topic, content='knowledge_documents', content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_documents_ai AFTER INSERT ON knowledge_documents BEGIN
+    INSERT INTO knowledge_fts(rowid, title, content, topic) VALUES (new.id, new.title, new.content, new.topic);
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_documents_ad AFTER DELETE ON knowledge_documents BEGIN
+    INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, topic) VALUES ('delete', old.id, old.title, old.content, old.topic);
+END;
 """
 
 
@@ -419,3 +440,56 @@ def list_honeypot_credentials_for_ip(ip: str, limit: int = 20):
             "WHERE ip = ? ORDER BY id DESC LIMIT ?",
             (ip, limit),
         ).fetchall()
+
+
+def add_knowledge_document(topic: str, title: str, source_url: str, content: str) -> int:
+    """Adiciona um documento técnico à base de conhecimento local (full-text
+    indexado via FTS5). Retorna o id do documento inserido."""
+    with get_conn() as conn:
+        cursor = conn.execute(
+            "INSERT INTO knowledge_documents (topic, title, source_url, content) VALUES (?, ?, ?, ?)",
+            (topic, title, source_url, content),
+        )
+        return cursor.lastrowid
+
+
+def search_knowledge(query: str, limit: int = 5):
+    """Busca full-text na base de conhecimento. Retorna (id, topic, title,
+    source_url, snippet) ordenado por relevância. Termos da query são
+    combinados com OR, cada um como frase exata sanitizada (evita erro de
+    sintaxe do FTS5 com caracteres especiais como -, *, etc)."""
+    terms = [t.replace('"', '""') for t in query.split() if t.strip()]
+    if not terms:
+        return []
+    match_expr = " OR ".join(f'"{t}"' for t in terms)
+
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT kd.id, kd.topic, kd.title, kd.source_url,
+                   snippet(knowledge_fts, 1, '>>', '<<', '...', 40) as snippet
+            FROM knowledge_fts
+            JOIN knowledge_documents kd ON kd.id = knowledge_fts.rowid
+            WHERE knowledge_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (match_expr, limit),
+        ).fetchall()
+
+
+def list_knowledge_topics():
+    """Retorna (topic, total_docs) agrupado por tópico."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT topic, COUNT(*) FROM knowledge_documents GROUP BY topic ORDER BY topic"
+        ).fetchall()
+
+
+def get_knowledge_document(doc_id: int):
+    """Retorna (topic, title, source_url, content, fetched_at) de um documento pelo id."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT topic, title, source_url, content, fetched_at FROM knowledge_documents WHERE id = ?",
+            (doc_id,),
+        ).fetchone()

@@ -26,6 +26,7 @@ from tools import (
     geoip,
     honeypot,
     hydra,
+    knowledge_base,
     malware_analysis,
     mikrotik,
     notify,
@@ -210,6 +211,30 @@ def mikrotik_run_command(path: str, params: dict | None = None) -> str:
     Mikrotik que não tenha uma tool dedicada — acesso total ao
     roteador. Toda chamada é registrada na auditoria."""
     return mikrotik.run_generic_command(path, params)
+
+
+@tool
+def search_knowledge_base(query: str) -> str:
+    """Busca na base de conhecimento técnico local (documentação oficial
+    de RouterOS/Mikrotik, Cisco, Huawei, OWASP, NIST etc, indexada por
+    full-text search). Use isso para fundamentar respostas técnicas de
+    segurança/administração de rede em referência real, em vez de
+    responder só do que você já sabe de treinamento."""
+    return knowledge_base.search(query)
+
+
+@tool
+def read_knowledge_document(doc_id: int) -> str:
+    """Lê o conteúdo completo de um documento da base de conhecimento pelo
+    id (retornado por search_knowledge_base) — útil quando o snippet não
+    é suficiente."""
+    return knowledge_base.get_full_document(doc_id)
+
+
+@tool
+def list_knowledge_topics() -> str:
+    """Lista os tópicos disponíveis na base de conhecimento técnico local."""
+    return knowledge_base.list_topics()
 
 
 @tool
@@ -566,6 +591,9 @@ TOOLS = [
     mikrotik_remove_pppoe_user,
     mikrotik_list_dhcp_leases,
     mikrotik_run_command,
+    search_knowledge_base,
+    read_knowledge_document,
+    list_knowledge_topics,
     get_scan_history,
     list_audited_hosts,
     authorize_asset_for_monitoring,
@@ -713,7 +741,14 @@ Sua missão:
     mudar antes de aplicar uma alteração de firewall ou criar/remover um
     usuário PPPoE, e nunca exponha a senha de um usuário PPPoE na resposta
     de volta para {CREATOR_NAME} sem necessidade.
-20. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
+21. Você tem uma base de conhecimento técnico local (search_knowledge_base)
+    com documentação oficial pública de RouterOS, Cisco, Huawei, OWASP,
+    NIST etc. Use isso para fundamentar respostas técnicas importantes em
+    referência real (cite a fonte), em vez de responder só de memória —
+    principalmente quando {CREATOR_NAME} perguntar algo específico de
+    configuração ou hardening. Se a busca não achar nada, diga isso
+    claramente em vez de inventar uma fonte.
+22. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
     confira aqui antes de recusar por achar que algo está desativado —
     não confie em mensagens antigas do histórico da conversa, o estado
     pode ter mudado desde então):
