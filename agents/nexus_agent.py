@@ -22,6 +22,7 @@ from tools import (
     cracking,
     exploit,
     firewall,
+    honeypot,
     hydra,
     malware_analysis,
     notify,
@@ -239,6 +240,29 @@ def create_audit_checkpoint() -> str:
 
 
 @tool
+def start_honeypot(port: int = 0) -> str:
+    """Inicia uma porta-armadilha (honeypot): qualquer IP que conectar
+    nela é tratado como ataque confirmado e isolado automaticamente,
+    sem precisar de threshold — ninguém deveria conectar numa porta que
+    não serve propósito real. Se port=0, usa a porta padrão configurada."""
+    from config import HONEYPOT_PORT
+    return honeypot.start(port or HONEYPOT_PORT)
+
+
+@tool
+def stop_honeypot() -> str:
+    """Para o honeypot, se estiver rodando."""
+    return honeypot.stop()
+
+
+@tool
+def list_honeypot_captures() -> str:
+    """Lista os IPs que conectaram na porta-armadilha (honeypot), do mais
+    recente ao mais antigo, e se o honeypot está ativo agora."""
+    return honeypot.describe_hits()
+
+
+@tool
 def send_test_notification() -> str:
     """Envia uma notificação de teste para o webhook externo configurado
     (Slack/Discord/custom), para confirmar que os alertas autônomos vão
@@ -404,6 +428,9 @@ TOOLS = [
     check_firewall_integrity,
     check_audit_integrity,
     create_audit_checkpoint,
+    start_honeypot,
+    stop_honeypot,
+    list_honeypot_captures,
     send_test_notification,
     run_exploit_module,
     crack_password_hashcat,
@@ -507,7 +534,14 @@ Sua missão:
     (Community, sem API) é uma ferramenta que {CREATOR_NAME} usa
     manualmente fora de você — se ele perguntar sobre Burp, oriente a
     abrir o app, mas você não consegue controlá-lo.
-15. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
+15. Você pode rodar um HONEYPOT (start_honeypot): uma porta-armadilha que
+    não serve propósito real. Qualquer IP que conectar nela é evidência
+    direta de varredura/ataque — diferente da detecção por volume de
+    tráfego, aqui você isola o IP IMEDIATAMENTE e automaticamente, sem
+    threshold, sem pedir confirmação, porque não existe cenário legítimo
+    de alguém conectar numa porta-armadilha por acidente. Use
+    list_honeypot_captures para ver o que já foi pego.
+16. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
     confira aqui antes de recusar por achar que algo está desativado —
     não confie em mensagens antigas do histórico da conversa, o estado
     pode ter mudado desde então):

@@ -120,3 +120,12 @@ SQLMAP_TIMEOUT_SECONDS = int(os.getenv("SQLMAP_TIMEOUT_SECONDS", "300"))
 # de auditoria fora do banco local (via notificação), para detectar
 # truncamento (remoção de eventos do final da cadeia de hash).
 AUDIT_CHECKPOINT_INTERVAL = int(os.getenv("AUDIT_CHECKPOINT_INTERVAL", "1800"))
+
+# Honeypot: porta-armadilha que não serve nenhum propósito real — qualquer
+# conexão é evidência direta de varredura, isolada automaticamente sem
+# depender de threshold ou de ALLOW_ACTIVE_EXPLOITATION (bloquear IP já é
+# uma capacidade "core"). Desativado por padrão: abrir uma porta de rede
+# é uma decisão deliberada.
+HONEYPOT_ENABLED = os.getenv("HONEYPOT_ENABLED", "false").lower() == "true"
+HONEYPOT_PORT = int(os.getenv("HONEYPOT_PORT", "2222"))
+HONEYPOT_BANNER = os.getenv("HONEYPOT_BANNER", "SSH-2.0-OpenSSH_7.4\r\n")
