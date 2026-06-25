@@ -69,6 +69,15 @@ CREATE TABLE IF NOT EXISTS audit_checkpoints (
     last_entry_hash TEXT NOT NULL,
     sent_externally INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS honeypot_hits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_honeypot_hits_ip ON honeypot_hits(ip);
 """
 
 
@@ -311,3 +320,32 @@ def get_latest_audit_checkpoint():
             "SELECT created_at, event_count, last_event_id, last_entry_hash, sent_externally "
             "FROM audit_checkpoints ORDER BY id DESC LIMIT 1"
         ).fetchone()
+
+
+def record_honeypot_hit(ip: str, port: int):
+    """Registra que um IP conectou na porta-armadilha — diferente da
+    detecção por volume de tráfego, isto é praticamente prova direta de
+    varredura/ataque, já que nenhum cliente legítimo deveria conectar
+    nessa porta."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO honeypot_hits (ip, port) VALUES (?, ?)",
+            (ip, port),
+        )
+
+
+def list_honeypot_hits(limit: int = 20):
+    """Retorna (ip, port, timestamp) das conexões mais recentes na armadilha."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, port, timestamp FROM honeypot_hits ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+def count_honeypot_hits(ip: str) -> int:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM honeypot_hits WHERE ip = ?", (ip,)
+        ).fetchone()
+        return row[0] if row else 0

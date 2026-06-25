@@ -18,6 +18,8 @@ from config import (
     AUDIT_CHECKPOINT_INTERVAL,
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
+    HONEYPOT_ENABLED,
+    HONEYPOT_PORT,
     MONITOR_POLL_INTERVAL,
     PROACTIVE_AUDIT_POLL_INTERVAL,
     RECONCILE_POLL_INTERVAL,
@@ -29,7 +31,7 @@ from database.db import (
     record_threat_flag,
     record_threat_isolation,
 )
-from tools import firewall
+from tools import firewall, honeypot
 from tools.audit import create_checkpoint
 from tools.notify import send_notification
 from tools.policy import classify_threats
@@ -173,7 +175,8 @@ def main():
     print(
         f"Exploração ativa (Metasploit/Hydra/SQLMap): "
         f"{'LIGADA' if ALLOW_ACTIVE_EXPLOITATION else 'desligada'} | "
-        f"Engenharia social: {'LIGADA' if ALLOW_SOCIAL_ENGINEERING else 'desligada'}"
+        f"Engenharia social: {'LIGADA' if ALLOW_SOCIAL_ENGINEERING else 'desligada'} | "
+        f"Honeypot: {'LIGADO porta ' + str(HONEYPOT_PORT) if HONEYPOT_ENABLED else 'desligado'}"
     )
     print(
         "Lembrete: mudanças no .env só valem depois de reiniciar este processo "
@@ -194,6 +197,8 @@ def main():
         target=audit_checkpoint_loop, args=(stop_event,), daemon=True
     )
     checkpoint_thread.start()
+    if HONEYPOT_ENABLED:
+        print(honeypot.start(HONEYPOT_PORT))
 
     try:
         while True:
@@ -212,6 +217,8 @@ def main():
         pass
     finally:
         stop_event.set()
+        if honeypot.is_running():
+            honeypot.stop()
         print("\nNexus Defense AI encerrada.")
 
 
