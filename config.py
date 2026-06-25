@@ -74,3 +74,29 @@ SSH_ALLOWED_PATTERNS = [
 ]
 if os.getenv("SSH_EXTRA_ALLOWED_PATTERNS"):
     SSH_ALLOWED_PATTERNS += os.getenv("SSH_EXTRA_ALLOWED_PATTERNS").split("|")
+
+# Padrões adicionais de enumeração de escalada de privilégio (read-only —
+# nenhum altera estado do host). Separados do bloco acima só para destacar
+# que são usados especificamente por tools/privesc.py.
+SSH_ALLOWED_PATTERNS += [
+    r"^sudo -l$",
+    r"^id$",
+    r"^find / -perm -4000 -type f 2>/dev/null$",
+    r"^getcap -r / 2>/dev/null$",
+    r"^cat /etc/crontab$",
+    r"^ls -la /etc/cron\.d/?$",
+    r"^env$",
+]
+
+# Exploração ativa (Metasploit) é a capacidade de maior impacto da Nexus —
+# pode causar crash/instabilidade real até em alvos autorizados. Desativada
+# por padrão; precisa ser ligada deliberadamente uma vez no .env. Depois de
+# ligada, a Nexus roda módulos sem pedir confirmação extra por execução.
+ALLOW_ACTIVE_EXPLOITATION = os.getenv("ALLOW_ACTIVE_EXPLOITATION", "false").lower() == "true"
+MSF_TIMEOUT_SECONDS = int(os.getenv("MSF_TIMEOUT_SECONDS", "180"))
+
+# Diretório onde a Nexus pode ler/escrever arquivos de hash e wordlists para
+# cracking de senha e amostras para análise de malware — nunca fora dele.
+WORKDIR = BASE_DIR / "workdir"
+HASHCAT_TIMEOUT_SECONDS = int(os.getenv("HASHCAT_TIMEOUT_SECONDS", "300"))
+JOHN_TIMEOUT_SECONDS = int(os.getenv("JOHN_TIMEOUT_SECONDS", "300"))
