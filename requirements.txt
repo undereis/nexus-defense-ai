@@ -9,3 +9,4 @@ fastapi
 uvicorn
 pytest
 pytest-mock
+librouteros

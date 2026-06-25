@@ -142,3 +142,13 @@ WATCHDOG_INTERVAL = int(os.getenv("WATCHDOG_INTERVAL", "60"))
 # A cada quantas horas a Nexus gera e envia um resumo executivo do período
 # (eventos, ataques, capturas de honeypot, estado do firewall) via notify.
 REPORT_INTERVAL_HOURS = float(os.getenv("REPORT_INTERVAL_HOURS", "24"))
+
+# Mikrotik RouterOS (ex: RB750) — acesso via API nativa (librouteros).
+# Porta 8728 = sem TLS (só rede local/confiável). Porta 8729 = TLS, exigida
+# para qualquer acesso pela internet, nunca mande credenciais em texto puro
+# por fora da LAN.
+MIKROTIK_HOST = os.getenv("MIKROTIK_HOST", "")
+MIKROTIK_USER = os.getenv("MIKROTIK_USER", "")
+MIKROTIK_PASSWORD = os.getenv("MIKROTIK_PASSWORD", "")
+MIKROTIK_PORT = int(os.getenv("MIKROTIK_PORT", "8728"))
+MIKROTIK_USE_TLS = os.getenv("MIKROTIK_USE_TLS", "false").lower() == "true"

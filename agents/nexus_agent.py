@@ -27,6 +27,7 @@ from tools import (
     honeypot,
     hydra,
     malware_analysis,
+    mikrotik,
     notify,
     privesc,
     proactive,
@@ -130,6 +131,85 @@ def generate_summary_report(hours: float = 24) -> str:
     quando {CREATOR_NAME} pedir um resumo do que aconteceu, em vez de
     listar eventos crus da auditoria."""
     return report.generate_summary_report(hours)
+
+
+@tool
+def mikrotik_test_connection() -> str:
+    """Testa a conexão com o roteador Mikrotik (RB750) configurado em
+    MIKROTIK_HOST/MIKROTIK_USER/MIKROTIK_PASSWORD no .env."""
+    return mikrotik.test_connection()
+
+
+@tool
+def mikrotik_status() -> str:
+    """Mostra recursos do sistema do Mikrotik: CPU, memória, uptime,
+    versão do RouterOS e modelo do board."""
+    return mikrotik.get_system_resources()
+
+
+@tool
+def mikrotik_list_interfaces() -> str:
+    """Lista as interfaces de rede do Mikrotik e se estão ativas."""
+    return mikrotik.list_interfaces()
+
+
+@tool
+def mikrotik_list_firewall_rules(chain: str = "") -> str:
+    """Lista as regras de firewall do Mikrotik. chain opcional ('input',
+    'forward', 'output') para filtrar."""
+    return mikrotik.list_firewall_rules(chain)
+
+
+@tool
+def mikrotik_add_firewall_rule(
+    chain: str, action: str, src_address: str = "", dst_address: str = "",
+    protocol: str = "", comment: str = ""
+) -> str:
+    """Adiciona uma regra de firewall no Mikrotik. chain: input/forward/output.
+    action: accept/drop/reject/log/passthrough. src_address/dst_address
+    podem ser IP único ou faixa CIDR (ex: '45.187.68.91' ou '10.0.0.0/24')."""
+    return mikrotik.add_firewall_rule(chain, action, src_address, dst_address, protocol, comment)
+
+
+@tool
+def mikrotik_remove_firewall_rule(rule_id: str) -> str:
+    """Remove uma regra de firewall do Mikrotik pelo ID (".id", ex: '*1'
+    — veja com mikrotik_list_firewall_rules)."""
+    return mikrotik.remove_firewall_rule(rule_id)
+
+
+@tool
+def mikrotik_list_pppoe_users() -> str:
+    """Lista os usuários PPPoE configurados no Mikrotik."""
+    return mikrotik.list_pppoe_users()
+
+
+@tool
+def mikrotik_create_pppoe_user(username: str, password: str, profile: str = "default") -> str:
+    """Cria um novo usuário PPPoE no Mikrotik."""
+    return mikrotik.create_pppoe_user(username, password, profile)
+
+
+@tool
+def mikrotik_remove_pppoe_user(username: str) -> str:
+    """Remove um usuário PPPoE do Mikrotik."""
+    return mikrotik.remove_pppoe_user(username)
+
+
+@tool
+def mikrotik_list_dhcp_leases() -> str:
+    """Lista os leases DHCP ativos no Mikrotik (IPs atribuídos e seus MACs)."""
+    return mikrotik.list_dhcp_leases()
+
+
+@tool
+def mikrotik_run_command(path: str, params: dict | None = None) -> str:
+    """Roda qualquer comando RouterOS no formato de menu (ex:
+    '/ip/address/print', '/interface/wireless/print',
+    '/queue/simple/add' com params). Use para qualquer operação do
+    Mikrotik que não tenha uma tool dedicada — acesso total ao
+    roteador. Toda chamada é registrada na auditoria."""
+    return mikrotik.run_generic_command(path, params)
 
 
 @tool
@@ -475,6 +555,17 @@ TOOLS = [
     generate_attacker_dossier,
     check_watchdog_health,
     generate_summary_report,
+    mikrotik_test_connection,
+    mikrotik_status,
+    mikrotik_list_interfaces,
+    mikrotik_list_firewall_rules,
+    mikrotik_add_firewall_rule,
+    mikrotik_remove_firewall_rule,
+    mikrotik_list_pppoe_users,
+    mikrotik_create_pppoe_user,
+    mikrotik_remove_pppoe_user,
+    mikrotik_list_dhcp_leases,
+    mikrotik_run_command,
     get_scan_history,
     list_audited_hosts,
     authorize_asset_for_monitoring,
@@ -612,7 +703,17 @@ Sua missão:
     em segundo plano a cada REPORT_INTERVAL_HOURS, mas {CREATOR_NAME} pode
     pedir um a qualquer momento — use isso em vez de listar eventos crus
     quando ele perguntar "o que aconteceu" em um período.
-19. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
+19. Você é também o analista de rede do roteador Mikrotik (RB750) de
+    {CREATOR_NAME}, com acesso total via API RouterOS (mikrotik_*): ver
+    recursos do sistema, interfaces, regras de firewall, usuários PPPoE,
+    leases DHCP, e mikrotik_run_command para qualquer operação sem tool
+    dedicada. Diferente das ferramentas ofensivas, isso é gestão de
+    infraestrutura PRÓPRIA — não precisa de toggle, mas toda escrita
+    (firewall, PPPoE) é registrada na auditoria. Sempre confirme o que vai
+    mudar antes de aplicar uma alteração de firewall ou criar/remover um
+    usuário PPPoE, e nunca exponha a senha de um usuário PPPoE na resposta
+    de volta para {CREATOR_NAME} sem necessidade.
+20. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
     confira aqui antes de recusar por achar que algo está desativado —
     não confie em mensagens antigas do histórico da conversa, o estado
     pode ter mudado desde então):
