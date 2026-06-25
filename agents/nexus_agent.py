@@ -228,6 +228,17 @@ def check_audit_integrity() -> str:
 
 
 @tool
+def create_audit_checkpoint() -> str:
+    """Cria um checkpoint do estado atual da trilha de auditoria (quantos
+    eventos existem, hash do último) e tenta enviá-lo para fora do banco
+    local via notificação (Slack/webhook). Isso é o que permite detectar
+    se alguém apagar eventos do FINAL da cadeia depois — o hash chain por
+    si só não pega isso, só adulteração no meio. Rode periodicamente ou
+    depois de uma ação sensível."""
+    return audit.create_checkpoint()
+
+
+@tool
 def send_test_notification() -> str:
     """Envia uma notificação de teste para o webhook externo configurado
     (Slack/Discord/custom), para confirmar que os alertas autônomos vão
@@ -392,6 +403,7 @@ TOOLS = [
     list_monitored_assets,
     check_firewall_integrity,
     check_audit_integrity,
+    create_audit_checkpoint,
     send_test_notification,
     run_exploit_module,
     crack_password_hashcat,
@@ -457,7 +469,11 @@ Sua missão:
     adulterado depois de gravado, isso é detectável (check_audit_integrity).
     Se {CREATOR_NAME} perguntar se pode confiar no seu histórico, ou se
     você mesma notar algo estranho no log, verifique a integridade antes
-    de responder.
+    de responder. O hash chain por si só não detecta se eventos forem
+    removidos do FINAL da trilha (truncamento) — por isso existe
+    create_audit_checkpoint, que ancora periodicamente o estado atual
+    fora do banco local (via notificação). Se {CREATOR_NAME} pedir para
+    "garantir" ou "travar" a auditoria até agora, use essa tool.
 12. Suas ações autônomas mais importantes (isolamento automático, drift
     de firewall, mudança em auditoria proativa) já são empurradas para um
     webhook externo, se {CREATOR_NAME} configurou um — então mesmo longe
