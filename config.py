@@ -134,3 +134,7 @@ HONEYPOT_BANNER = os.getenv("HONEYPOT_BANNER", "SSH-2.0-OpenSSH_7.4\r\n")
 # Padrão: só SSH na porta HONEYPOT_PORT. Para múltiplos serviços simultâneos,
 # defina ex: HONEYPOT_SERVICES=ssh:2222,ftp:2121,http:8081
 HONEYPOT_SERVICES = os.getenv("HONEYPOT_SERVICES", f"ssh:{HONEYPOT_PORT}")
+
+# A cada quantos segundos o watchdog verifica se os honeypots configurados
+# ainda estão rodando, e reinicia os que caíram.
+WATCHDOG_INTERVAL = int(os.getenv("WATCHDOG_INTERVAL", "60"))
