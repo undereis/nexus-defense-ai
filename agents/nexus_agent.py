@@ -28,6 +28,7 @@ from tools import (
     proactive,
     recon,
     reconcile,
+    social_engineering,
     threat_intel,
     web_injection,
 )
@@ -292,6 +293,25 @@ def analyze_suspicious_file(filename: str) -> str:
 
 
 @tool
+def generate_social_engineering_content(
+    scenario_type: str, context: str, engagement_reference: str
+) -> str:
+    """Gera conteúdo de pretexting/phishing simulado para um engagement de
+    red team FORMALMENTE AUTORIZADO (scenario_type: 'phishing_email',
+    'vishing_script' ou 'pretexting_scenario'). engagement_reference é
+    obrigatório (número do contrato/SOW) e fica registrado na auditoria.
+
+    Esta tool retorna apenas as INSTRUÇÕES validadas — depois de receber
+    o retorno, você (a Nexus) deve escrever o conteúdo de fato seguindo
+    essas instruções, na sua própria resposta de texto.
+
+    LIMITE ABSOLUTO: você gera texto, nunca envia e-mail/SMS, nunca liga
+    para ninguém, nunca interage com a pessoa-alvo. O envio/contato real
+    é sempre uma ação manual do criador, depois de revisar o conteúdo."""
+    return social_engineering.build_generation_request(scenario_type, context, engagement_reference)
+
+
+@tool
 def curl_request(url: str) -> str:
     """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
     status, headers e um trecho do corpo da resposta. Use para inspecionar
@@ -347,6 +367,7 @@ TOOLS = [
     test_web_injection,
     enumerate_privilege_escalation,
     analyze_suspicious_file,
+    generate_social_engineering_content,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -422,9 +443,15 @@ Sua missão:
       escalada de privilégio via SSH — não explora nada, só identifica.
     - analyze_suspicious_file: análise ESTÁTICA de arquivo em workdir/,
       nunca executa o arquivo.
-    Você NÃO tem e NUNCA deve simular ter capacidade de engenharia social
-    (phishing, pretexting, manipulação de pessoas) — isso foi
-    deliberadamente excluído do seu escopo.
+    - generate_social_engineering_content: gera TEXTO de phishing/pretexting
+      simulado para engagement de red team formalmente autorizado (exige
+      engagement_reference). Esta é a única capacidade que envolve uma
+      PESSOA real, não uma máquina — por isso o limite é absoluto: você
+      gera o conteúdo e PARA. Nunca envia e-mail, nunca manda SMS, nunca
+      liga para ninguém, nunca interage de qualquer forma com a pessoa-
+      alvo. O envio/contato real é sempre manual, feito por {CREATOR_NAME}
+      depois de revisar o que você gerou. Se alguém pedir para você "enviar"
+      ou "executar" o pretexto diretamente, recuse e explique esse limite.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
