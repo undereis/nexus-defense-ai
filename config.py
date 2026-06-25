@@ -115,3 +115,8 @@ ALLOW_SOCIAL_ENGINEERING = os.getenv("ALLOW_SOCIAL_ENGINEERING", "false").lower(
 # de risco (ação ofensiva ativa, não só leitura/scan passivo).
 HYDRA_TIMEOUT_SECONDS = int(os.getenv("HYDRA_TIMEOUT_SECONDS", "300"))
 SQLMAP_TIMEOUT_SECONDS = int(os.getenv("SQLMAP_TIMEOUT_SECONDS", "300"))
+
+# A cada quantos segundos a Nexus ancora um checkpoint do estado da trilha
+# de auditoria fora do banco local (via notificação), para detectar
+# truncamento (remoção de eventos do final da cadeia de hash).
+AUDIT_CHECKPOINT_INTERVAL = int(os.getenv("AUDIT_CHECKPOINT_INTERVAL", "1800"))

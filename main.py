@@ -15,6 +15,7 @@ from config import (
     ALERT_COOLDOWN_SECONDS,
     ALLOW_ACTIVE_EXPLOITATION,
     ALLOW_SOCIAL_ENGINEERING,
+    AUDIT_CHECKPOINT_INTERVAL,
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
     MONITOR_POLL_INTERVAL,
@@ -29,6 +30,7 @@ from database.db import (
     record_threat_isolation,
 )
 from tools import firewall
+from tools.audit import create_checkpoint
 from tools.notify import send_notification
 from tools.policy import classify_threats
 from tools.proactive import check_asset, get_due_assets
@@ -155,6 +157,15 @@ def reconcile_loop(stop_event: threading.Event):
         stop_event.wait(RECONCILE_POLL_INTERVAL)
 
 
+def audit_checkpoint_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            create_checkpoint()
+        except Exception as exc:
+            log_event("audit_checkpoint_error", None, str(exc))
+        stop_event.wait(AUDIT_CHECKPOINT_INTERVAL)
+
+
 def main():
     init_db()
     print("=== Nexus Defense AI ===")
@@ -179,6 +190,10 @@ def main():
     proactive_thread.start()
     reconcile_thread = threading.Thread(target=reconcile_loop, args=(stop_event,), daemon=True)
     reconcile_thread.start()
+    checkpoint_thread = threading.Thread(
+        target=audit_checkpoint_loop, args=(stop_event,), daemon=True
+    )
+    checkpoint_thread.start()
 
     try:
         while True:

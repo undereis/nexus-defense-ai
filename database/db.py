@@ -60,6 +60,15 @@ CREATE TABLE IF NOT EXISTS authorized_assets (
     interval_hours REAL NOT NULL DEFAULT 24,
     last_scan_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS audit_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    event_count INTEGER NOT NULL,
+    last_event_id INTEGER NOT NULL,
+    last_entry_hash TEXT NOT NULL,
+    sent_externally INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -279,4 +288,26 @@ def get_latest_finding(host: str, scan_type: str):
             "SELECT summary FROM scan_findings WHERE host = ? AND scan_type = ? "
             "ORDER BY id DESC LIMIT 1",
             (host, scan_type),
+        ).fetchone()
+
+
+def save_audit_checkpoint(event_count: int, last_event_id: int, last_entry_hash: str, sent_externally: bool):
+    """Registra um checkpoint do estado da trilha de auditoria: quantos
+    eventos existiam e qual era o hash do último, num dado momento. Usado
+    para detectar truncamento (remoção de eventos do FINAL da cadeia, que
+    o hash chain por si só não detecta)."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO audit_checkpoints (event_count, last_event_id, last_entry_hash, sent_externally) "
+            "VALUES (?, ?, ?, ?)",
+            (event_count, last_event_id, last_entry_hash, 1 if sent_externally else 0),
+        )
+
+
+def get_latest_audit_checkpoint():
+    """Retorna (created_at, event_count, last_event_id, last_entry_hash, sent_externally) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT created_at, event_count, last_event_id, last_entry_hash, sent_externally "
+            "FROM audit_checkpoints ORDER BY id DESC LIMIT 1"
         ).fetchone()
