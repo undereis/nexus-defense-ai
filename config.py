@@ -100,3 +100,10 @@ MSF_TIMEOUT_SECONDS = int(os.getenv("MSF_TIMEOUT_SECONDS", "180"))
 WORKDIR = BASE_DIR / "workdir"
 HASHCAT_TIMEOUT_SECONDS = int(os.getenv("HASHCAT_TIMEOUT_SECONDS", "300"))
 JOHN_TIMEOUT_SECONDS = int(os.getenv("JOHN_TIMEOUT_SECONDS", "300"))
+
+# Engenharia social (pretexting/phishing simulado) é a única capacidade que
+# manipula PESSOAS reais, não infraestrutura — desativada por padrão, exige
+# habilitação deliberada. Mesmo habilitada, a Nexus só GERA conteúdo (texto);
+# nunca envia e-mail, SMS ou liga para ninguém — isso é sempre manual, feito
+# por você, depois de revisar o conteúdo gerado.
+ALLOW_SOCIAL_ENGINEERING = os.getenv("ALLOW_SOCIAL_ENGINEERING", "false").lower() == "true"
