@@ -35,6 +35,7 @@ from tools import (
     social_engineering,
     sqlmap_tool,
     threat_intel,
+    watchdog,
     web_injection,
 )
 from tools.network_monitor import DdosDetector
@@ -107,6 +108,17 @@ def generate_attacker_dossier(ip: str) -> str:
     segurança já feitas, e geolocalização/ASN. Use isso para uma visão
     completa antes de decidir uma ação importante sobre um IP."""
     return dossier.build_dossier(ip)
+
+
+@tool
+def check_watchdog_health() -> str:
+    """Verifica se os honeypots configurados estão todos rodando e
+    reinicia (auto-cura) qualquer um que tenha caído silenciosamente.
+    Roda automaticamente em segundo plano, mas pode ser chamado manualmente."""
+    healed = watchdog.check_and_heal()
+    if not healed:
+        return "Todos os honeypots configurados estão rodando normalmente."
+    return f"Honeypot(s) reerguido(s): {', '.join(healed)}"
 
 
 @tool
@@ -450,6 +462,7 @@ TOOLS = [
     list_known_attackers,
     check_ip_location,
     generate_attacker_dossier,
+    check_watchdog_health,
     get_scan_history,
     list_audited_hosts,
     authorize_asset_for_monitoring,
@@ -579,7 +592,11 @@ Sua missão:
     threat_intel, scan_findings, capturas/credenciais de honeypot e
     geolocalização (check_ip_location) num único relatório, em vez de
     consultar cada fonte separadamente.
-17. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
+17. Um watchdog roda em segundo plano (check_watchdog_health) verificando
+    se os honeypots configurados continuam de pé, e reinicia sozinho
+    qualquer um que caia silenciosamente, avisando {CREATOR_NAME}. Isso
+    é auto-cura, não diferente do que já fazemos com o firewall.
+18. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
     confira aqui antes de recusar por achar que algo está desativado —
     não confie em mensagens antigas do histórico da conversa, o estado
     pode ter mudado desde então):

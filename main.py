@@ -23,6 +23,7 @@ from config import (
     MONITOR_POLL_INTERVAL,
     PROACTIVE_AUDIT_POLL_INTERVAL,
     RECONCILE_POLL_INTERVAL,
+    WATCHDOG_INTERVAL,
 )
 from database.db import (
     get_findings_for_host,
@@ -38,6 +39,7 @@ from tools.policy import classify_threats
 from tools.proactive import check_asset, get_due_assets
 from tools.reconcile import check_and_reconcile, describe
 from tools.threat_intel import is_repeat_offender
+from tools.watchdog import check_and_heal
 
 _last_alerted: dict[str, float] = {}
 
@@ -168,6 +170,17 @@ def audit_checkpoint_loop(stop_event: threading.Event):
         stop_event.wait(AUDIT_CHECKPOINT_INTERVAL)
 
 
+def watchdog_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            healed = check_and_heal()
+            if healed:
+                print(f"\n[Nexus] Watchdog reergueu: {', '.join(healed)}\n> ", end="", flush=True)
+        except Exception as exc:
+            log_event("watchdog_error", None, str(exc))
+        stop_event.wait(WATCHDOG_INTERVAL)
+
+
 def main():
     init_db()
     print("=== Nexus Defense AI ===")
@@ -201,6 +214,8 @@ def main():
         for entry in HONEYPOT_SERVICES.split(","):
             service, _, port_str = entry.strip().partition(":")
             print(honeypot.start(service, int(port_str) if port_str else 0))
+    watchdog_thread = threading.Thread(target=watchdog_loop, args=(stop_event,), daemon=True)
+    watchdog_thread.start()
 
     try:
         while True:
