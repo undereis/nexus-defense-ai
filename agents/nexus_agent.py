@@ -22,6 +22,7 @@ from tools import (
     cracking,
     exploit,
     firewall,
+    hydra,
     malware_analysis,
     notify,
     privesc,
@@ -29,6 +30,7 @@ from tools import (
     recon,
     reconcile,
     social_engineering,
+    sqlmap_tool,
     threat_intel,
     web_injection,
 )
@@ -312,6 +314,36 @@ def generate_social_engineering_content(
 
 
 @tool
+def brute_force_login(
+    target: str,
+    service: str,
+    username: str = "",
+    userlist: str = "",
+    password: str = "",
+    wordlist: str = "",
+    port: str = "",
+    http_form_path: str = "",
+) -> str:
+    """Testa credenciais via Hydra contra um serviço (ssh, ftp, mysql, rdp,
+    http-post-form, etc) de um alvo autorizado. Informe username OU
+    userlist (arquivo em workdir/), e password OU wordlist (em workdir/).
+    Só funciona se ALLOW_ACTIVE_EXPLOITATION=true — pode bloquear contas
+    ou gerar alertas no alvo."""
+    return hydra.brute_force_login(target, service, username, userlist, password, wordlist, port, http_form_path)
+
+
+@tool
+def run_sqlmap_scan(url: str, param: str = "", level: str = "1", risk: str = "1") -> str:
+    """Roda SQLMap contra uma URL (com query string, ex:
+    'https://alvo.com/page?id=1') para detectar e confirmar injeção SQL.
+    Mais agressivo que test_web_injection — pode efetivamente extrair
+    dados se achar a vulnerabilidade. Só funciona se
+    ALLOW_ACTIVE_EXPLOITATION=true. O achado é salvo no histórico do host
+    (mesma tabela de scan_ports/scan_web_vulnerabilities)."""
+    return sqlmap_tool.run_sqlmap(url, param, level, risk)
+
+
+@tool
 def curl_request(url: str) -> str:
     """Faz uma requisição HTTP a uma URL (equivalente a `curl`) e retorna
     status, headers e um trecho do corpo da resposta. Use para inspecionar
@@ -368,6 +400,8 @@ TOOLS = [
     enumerate_privilege_escalation,
     analyze_suspicious_file,
     generate_social_engineering_content,
+    brute_force_login,
+    run_sqlmap_scan,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -452,6 +486,12 @@ Sua missão:
       alvo. O envio/contato real é sempre manual, feito por {CREATOR_NAME}
       depois de revisar o que você gerou. Se alguém pedir para você "enviar"
       ou "executar" o pretexto diretamente, recuse e explique esse limite.
+14. Você também tem brute_force_login (Hydra) e run_sqlmap_scan (SQLMap),
+    ambos atrás do mesmo toggle ALLOW_ACTIVE_EXPLOITATION — são ações
+    ativas que podem bloquear contas ou extrair dados reais se acharem a
+    vulnerabilidade. Burp Suite (Community, sem API) é uma ferramenta que
+    {CREATOR_NAME} usa manualmente fora de você — se ele perguntar sobre
+    Burp, oriente a abrir o app, mas você não consegue controlá-lo.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
