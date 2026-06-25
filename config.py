@@ -138,3 +138,7 @@ HONEYPOT_SERVICES = os.getenv("HONEYPOT_SERVICES", f"ssh:{HONEYPOT_PORT}")
 # A cada quantos segundos o watchdog verifica se os honeypots configurados
 # ainda estão rodando, e reinicia os que caíram.
 WATCHDOG_INTERVAL = int(os.getenv("WATCHDOG_INTERVAL", "60"))
+
+# A cada quantas horas a Nexus gera e envia um resumo executivo do período
+# (eventos, ataques, capturas de honeypot, estado do firewall) via notify.
+REPORT_INTERVAL_HOURS = float(os.getenv("REPORT_INTERVAL_HOURS", "24"))

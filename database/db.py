@@ -158,6 +158,17 @@ def get_all_events():
         ).fetchall()
 
 
+def get_events_since(hours: float):
+    """Retorna (event_type, source_ip, detail, action_taken, timestamp) dos
+    eventos das últimas N horas — base para o resumo executivo periódico."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT event_type, source_ip, detail, action_taken, timestamp FROM events "
+            "WHERE timestamp >= datetime('now', ?) ORDER BY id ASC",
+            (f"-{hours} hours",),
+        ).fetchall()
+
+
 def save_message(role: str, content: str):
     with get_conn() as conn:
         conn.execute(
