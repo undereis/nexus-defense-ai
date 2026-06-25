@@ -23,6 +23,7 @@ from config import (
     MONITOR_POLL_INTERVAL,
     PROACTIVE_AUDIT_POLL_INTERVAL,
     RECONCILE_POLL_INTERVAL,
+    REPORT_INTERVAL_HOURS,
     WATCHDOG_INTERVAL,
 )
 from database.db import (
@@ -38,6 +39,7 @@ from tools.notify import send_notification
 from tools.policy import classify_threats
 from tools.proactive import check_asset, get_due_assets
 from tools.reconcile import check_and_reconcile, describe
+from tools.report import generate_summary_report
 from tools.threat_intel import is_repeat_offender
 from tools.watchdog import check_and_heal
 
@@ -181,6 +183,17 @@ def watchdog_loop(stop_event: threading.Event):
         stop_event.wait(WATCHDOG_INTERVAL)
 
 
+def report_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            report = generate_summary_report(REPORT_INTERVAL_HOURS)
+            send_notification(f"Nexus: resumo executivo ({REPORT_INTERVAL_HOURS:g}h)", report)
+            log_event("summary_report_sent", None, f"hours={REPORT_INTERVAL_HOURS}", action_taken="enviado")
+        except Exception as exc:
+            log_event("report_error", None, str(exc))
+        stop_event.wait(REPORT_INTERVAL_HOURS * 3600)
+
+
 def main():
     init_db()
     print("=== Nexus Defense AI ===")
@@ -216,6 +229,8 @@ def main():
             print(honeypot.start(service, int(port_str) if port_str else 0))
     watchdog_thread = threading.Thread(target=watchdog_loop, args=(stop_event,), daemon=True)
     watchdog_thread.start()
+    report_thread = threading.Thread(target=report_loop, args=(stop_event,), daemon=True)
+    report_thread.start()
 
     try:
         while True:

@@ -32,6 +32,7 @@ from tools import (
     proactive,
     recon,
     reconcile,
+    report,
     social_engineering,
     sqlmap_tool,
     threat_intel,
@@ -119,6 +120,16 @@ def check_watchdog_health() -> str:
     if not healed:
         return "Todos os honeypots configurados estão rodando normalmente."
     return f"Honeypot(s) reerguido(s): {', '.join(healed)}"
+
+
+@tool
+def generate_summary_report(hours: float = 24) -> str:
+    """Gera um resumo executivo das últimas N horas (padrão 24h): total de
+    eventos, destaques (ataques auto-isolados, capturas/credenciais de
+    honeypot, drift corrigido, etc) e o estado atual do firewall. Use
+    quando {CREATOR_NAME} pedir um resumo do que aconteceu, em vez de
+    listar eventos crus da auditoria."""
+    return report.generate_summary_report(hours)
 
 
 @tool
@@ -463,6 +474,7 @@ TOOLS = [
     check_ip_location,
     generate_attacker_dossier,
     check_watchdog_health,
+    generate_summary_report,
     get_scan_history,
     list_audited_hosts,
     authorize_asset_for_monitoring,
@@ -596,7 +608,11 @@ Sua missão:
     se os honeypots configurados continuam de pé, e reinicia sozinho
     qualquer um que caia silenciosamente, avisando {CREATOR_NAME}. Isso
     é auto-cura, não diferente do que já fazemos com o firewall.
-18. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
+18. Um resumo executivo (generate_summary_report) é enviado automaticamente
+    em segundo plano a cada REPORT_INTERVAL_HOURS, mas {CREATOR_NAME} pode
+    pedir um a qualquer momento — use isso em vez de listar eventos crus
+    quando ele perguntar "o que aconteceu" em um período.
+19. ESTADO ATUAL DAS FERRAMENTAS DE ALTO IMPACTO NESTA EXECUÇÃO (fato,
     confira aqui antes de recusar por achar que algo está desativado —
     não confie em mensagens antigas do histórico da conversa, o estado
     pode ter mudado desde então):
