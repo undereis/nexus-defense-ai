@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     args_json TEXT NOT NULL,
     summary TEXT NOT NULL,
     confirmation_code TEXT NOT NULL DEFAULT '',
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     resolved_at TEXT,
@@ -153,6 +154,10 @@ def init_db():
             pass  # coluna já existe
         try:
             conn.execute("ALTER TABLE pending_actions ADD COLUMN confirmation_code TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
+        try:
+            conn.execute("ALTER TABLE pending_actions ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # coluna já existe
 
@@ -528,15 +533,33 @@ def create_pending_action(
 
 
 def get_pending_action(action_id: int):
-    """Retorna (id, tool_name, args_json, summary, confirmation_code, status, created_at, resolved_at, expires_at)."""
+    """Retorna (id, tool_name, args_json, summary, confirmation_code, status,
+    created_at, resolved_at, expires_at, failed_attempts). failed_attempts
+    fica no final para não quebrar índices de quem já lê as colunas
+    anteriores por posição."""
     with get_conn() as conn:
         return conn.execute(
             """
-            SELECT id, tool_name, args_json, summary, confirmation_code, status, created_at, resolved_at, expires_at
+            SELECT id, tool_name, args_json, summary, confirmation_code, status,
+                   created_at, resolved_at, expires_at, failed_attempts
             FROM pending_actions WHERE id = ?
             """,
             (action_id,),
         ).fetchone()
+
+
+def increment_failed_attempts(action_id: int) -> int:
+    """Incrementa o contador de tentativas de código incorreto para uma
+    ação pendente e retorna o novo total."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE pending_actions SET failed_attempts = failed_attempts + 1 WHERE id = ?",
+            (action_id,),
+        )
+        row = conn.execute(
+            "SELECT failed_attempts FROM pending_actions WHERE id = ?", (action_id,)
+        ).fetchone()
+        return row[0] if row else 0
 
 
 def resolve_pending_action(action_id: int, status: str):

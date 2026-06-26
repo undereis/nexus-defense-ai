@@ -166,6 +166,31 @@ def test_sweep_expired_does_not_touch_active_pending_actions():
     assert row[5] == "pending"
 
 
+def test_confirm_and_execute_locks_action_after_too_many_wrong_codes():
+    calls = []
+    risk.register_action("test_action_bruteforce", lambda **kw: calls.append(kw) or "ok")
+    msg = risk.request_confirmation("test_action_bruteforce", "resumo força bruta")
+    action_id = _extract_id(msg)
+    real_code = _real_code(action_id)
+
+    for attempt in range(1, risk.MAX_FAILED_ATTEMPTS):
+        result = risk.confirm_and_execute(action_id, "000000")
+        assert f"tentativa {attempt}/{risk.MAX_FAILED_ATTEMPTS}" in result
+        row = get_pending_action(action_id)
+        assert row[5] == "pending"  # ainda não bloqueada
+
+    # última tentativa permitida: agora deve travar a ação
+    final_result = risk.confirm_and_execute(action_id, "000000")
+    assert "CANCELADA" in final_result
+    row = get_pending_action(action_id)
+    assert row[5] == "bloqueada_por_tentativas"
+
+    # mesmo com o código CORRETO depois disso, não executa mais
+    result_with_correct_code = risk.confirm_and_execute(action_id, real_code)
+    assert "não pode ser executada de novo" in result_with_correct_code
+    assert calls == []
+
+
 def test_confirm_and_execute_uses_timing_safe_comparison(monkeypatch):
     """Garante que a checagem do código passa por secrets.compare_digest,
     não por != direto — regressão do achado de timing attack."""
