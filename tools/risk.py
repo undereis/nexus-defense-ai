@@ -24,11 +24,14 @@ import secrets
 from database.db import (
     create_pending_action,
     get_pending_action,
+    increment_failed_attempts,
     list_pending_actions,
     log_event,
     resolve_pending_action,
     search_knowledge,
 )
+
+MAX_FAILED_ATTEMPTS = 5
 
 # Funções reais por trás de cada ação de alto risco. Registradas aqui
 # (não nas tools do agente) para que confirm_pending_action consiga
@@ -54,6 +57,16 @@ def _quick_kb_reference(query: str) -> str:
     return f"\nReferência técnica encontrada ([{topic}] {title}, fonte: {source_url}):\n  {snippet}"
 
 
+def _notify_out_of_band(title: str, message: str) -> None:
+    try:
+        from tools import notify
+
+        if notify.is_configured():
+            notify.send_notification(title, message)
+    except Exception:
+        pass
+
+
 def _deliver_code_out_of_band(action_id: int, summary: str, code: str) -> None:
     """Manda o código de confirmação por um canal que não passa pelo
     contexto do agente: webhook/Slack se configurado, e sempre também no
@@ -61,13 +74,7 @@ def _deliver_code_out_of_band(action_id: int, summary: str, code: str) -> None:
     mas não no texto que volta para o LLM)."""
     message = f"Ação pendente [{action_id}]: {summary}\nCódigo de confirmação: {code}"
     print(f"\n>>> NEXUS — CONFIRMAÇÃO NECESSÁRIA >>>\n{message}\n<<<\n")
-    try:
-        from tools import notify
-
-        if notify.is_configured():
-            notify.send_notification("Nexus: confirmação de ação de alto risco", message)
-    except Exception:
-        pass  # entrega no terminal já aconteceu; webhook é bônus, não bloqueante
+    _notify_out_of_band("Nexus: confirmação de ação de alto risco", message)
 
 
 def request_confirmation(
@@ -107,7 +114,8 @@ def confirm_and_execute(action_id: int, code: str) -> str:
     if row is None:
         return f"Ação pendente {action_id} não encontrada."
 
-    _id, tool_name, args_json, summary, real_code, status, _created_at, _resolved_at, expires_at = row
+    (_id, tool_name, args_json, summary, real_code, status,
+     _created_at, _resolved_at, expires_at, failed_attempts) = row
 
     if status != "pending":
         return f"Ação {action_id} já está com status '{status}', não pode ser executada de novo."
@@ -116,13 +124,36 @@ def confirm_and_execute(action_id: int, code: str) -> str:
     # timing proporcional a quantos caracteres iniciais batem, reduzindo
     # o espaço de busca de um ataque por força bruta dentro do TTL.
     if not code or not secrets.compare_digest(code.strip().lower(), real_code.lower()):
+        new_count = increment_failed_attempts(action_id)
         log_event(
             "pending_action_code_mismatch", None,
-            f"id={action_id} tool={tool_name}", action_taken="código incorreto, execução bloqueada",
+            f"id={action_id} tool={tool_name} attempt={new_count}", action_taken="código incorreto, execução bloqueada",
         )
+        # Rate-limit: sem isso, um código de 6 hex (16M combinações) é
+        # adivinhável por força bruta automatizada dentro da janela de TTL.
+        # Depois de poucas tentativas erradas, a ação inteira é cancelada —
+        # o criador precisa pedir a ação de novo, recebendo um código novo.
+        if new_count >= MAX_FAILED_ATTEMPTS:
+            resolve_pending_action(action_id, "bloqueada_por_tentativas")
+            log_event(
+                "pending_action_locked", None,
+                f"id={action_id} tool={tool_name} attempts={new_count}",
+                action_taken="cancelada por excesso de tentativas incorretas",
+            )
+            _notify_out_of_band(
+                "Nexus: ação bloqueada por tentativas incorretas",
+                f"A ação [{action_id}] '{summary}' foi cancelada após {new_count} tentativas "
+                "de código incorretas seguidas. Se isso não foi você, alguém tentou adivinhar "
+                "o código — investigue.",
+            )
+            return (
+                f"Ação {action_id} CANCELADA: excesso de tentativas de código incorreto "
+                f"({new_count}). Por segurança, peça a ação de novo para receber um código novo."
+            )
         return (
-            f"Código de confirmação incorreto para a ação {action_id}. A ação continua "
-            "pendente — não foi executada."
+            f"Código de confirmação incorreto para a ação {action_id} "
+            f"(tentativa {new_count}/{MAX_FAILED_ATTEMPTS}). A ação continua pendente — "
+            "não foi executada."
         )
 
     from database.db import get_conn
@@ -217,16 +248,10 @@ def sweep_expired() -> list[int]:
             "pending_action_expired", None, f"id={action_id} tool={tool_name}",
             action_taken="expirou sem confirmação",
         )
-        try:
-            from tools import notify
-
-            if notify.is_configured():
-                notify.send_notification(
-                    "Nexus: ação pendente expirou",
-                    f"A ação [{action_id}] '{summary}' expirou sem confirmação e NÃO foi executada.",
-                )
-        except Exception:
-            pass
+        _notify_out_of_band(
+            "Nexus: ação pendente expirou",
+            f"A ação [{action_id}] '{summary}' expirou sem confirmação e NÃO foi executada.",
+        )
         expired_ids.append(action_id)
     return expired_ids
 
