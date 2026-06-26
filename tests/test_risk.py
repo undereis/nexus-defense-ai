@@ -76,6 +76,29 @@ def test_confirm_and_execute_expired_action():
     assert "expirou" in result
 
 
+def test_request_confirmation_attaches_knowledge_base_reference_when_found():
+    from database.db import add_knowledge_document
+
+    unique_term = "zyxwvuabcde9988"
+    add_knowledge_document(
+        "mikrotik", "RouterOS Firewall Filter Chains de Teste",
+        "https://help.mikrotik.com/docs/firewall",
+        f"Documentação sobre chain=input action=drop no firewall RouterOS, termo único {unique_term}.",
+    )
+    risk.register_action("test_action_kb", lambda **kw: "ok")
+
+    msg = risk.request_confirmation("test_action_kb", "resumo com kb", kb_query=unique_term)
+
+    assert "Referência técnica encontrada" in msg
+    assert "RouterOS Firewall Filter Chains de Teste" in msg
+
+
+def test_request_confirmation_without_kb_query_has_no_reference_block():
+    risk.register_action("test_action_no_kb", lambda **kw: "ok")
+    msg = risk.request_confirmation("test_action_no_kb", "resumo sem kb")
+    assert "Referência técnica encontrada" not in msg
+
+
 def test_list_pending_shows_only_active_pending_actions():
     risk.register_action("test_action_f", lambda: "ok")
     msg = risk.request_confirmation("test_action_f", "resumo listável")

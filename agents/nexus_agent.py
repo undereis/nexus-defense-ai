@@ -184,6 +184,7 @@ def mikrotik_add_firewall_rule(
     summary = f"Adicionar regra firewall Mikrotik: chain={chain} action={action} src={src_address} dst={dst_address} proto={protocol}"
     return risk_gate.request_confirmation(
         "mikrotik_add_firewall_rule", summary,
+        kb_query=f"firewall {chain} {action} RouterOS",
         chain=chain, action=action, src_address=src_address,
         dst_address=dst_address, protocol=protocol, comment=comment,
     )
@@ -240,7 +241,9 @@ def mikrotik_run_command(path: str, params: dict | None = None) -> str:
     lugar, TODO uso passa pelo gate de confirmação: ALTO RISCO, não executa
     direto."""
     summary = f"Comando genérico Mikrotik: path={path} params={params}"
-    return risk_gate.request_confirmation("mikrotik_run_command", summary, path=path, params=params)
+    return risk_gate.request_confirmation(
+        "mikrotik_run_command", summary, kb_query=f"RouterOS {path}", path=path, params=params
+    )
 
 
 @tool

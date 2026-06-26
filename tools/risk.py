@@ -22,6 +22,7 @@ from database.db import (
     list_pending_actions,
     log_event,
     resolve_pending_action,
+    search_knowledge,
 )
 
 # Funções reais por trás de cada ação de alto risco. Registradas aqui
@@ -34,9 +35,27 @@ def register_action(name: str, func: callable) -> None:
     _ACTIONS[name] = func
 
 
-def request_confirmation(tool_name: str, summary: str, ttl_minutes: int = 10, **kwargs) -> str:
+def _quick_kb_reference(query: str) -> str:
+    """Busca o melhor resultado da base de conhecimento local para dar
+    contexto técnico automático à confirmação, sem depender do LLM lembrar
+    de chamar search_knowledge_base por conta própria."""
+    try:
+        rows = search_knowledge(query, limit=1)
+    except Exception:
+        return ""
+    if not rows:
+        return ""
+    _doc_id, topic, title, source_url, snippet = rows[0]
+    return f"\nReferência técnica encontrada ([{topic}] {title}, fonte: {source_url}):\n  {snippet}"
+
+
+def request_confirmation(
+    tool_name: str, summary: str, ttl_minutes: int = 10, kb_query: str = "", **kwargs
+) -> str:
     """Cria uma ação pendente em vez de executar na hora. Retorna o texto
-    que a tool deve devolver ao agente (e, por extensão, ao criador)."""
+    que a tool deve devolver ao agente (e, por extensão, ao criador).
+    Se kb_query for informado, anexa automaticamente a melhor referência
+    da base de conhecimento local relacionada à ação proposta."""
     action_id = create_pending_action(tool_name, json.dumps(kwargs), summary, ttl_minutes)
     log_event(
         "pending_action_created",
@@ -44,9 +63,11 @@ def request_confirmation(tool_name: str, summary: str, ttl_minutes: int = 10, **
         f"id={action_id} tool={tool_name} summary={summary!r}",
         action_taken="aguardando confirmação",
     )
+    kb_note = _quick_kb_reference(kb_query) if kb_query else ""
     return (
         f"AÇÃO DE ALTO RISCO NÃO EXECUTADA — pendente de confirmação (id={action_id}).\n"
-        f"Resumo: {summary}\n"
+        f"Resumo: {summary}"
+        f"{kb_note}\n"
         f"Expira em {ttl_minutes} minutos. Para executar, o criador precisa dizer "
         f'explicitamente algo como "confirmo a ação {action_id}" em uma nova mensagem.'
     )
