@@ -112,6 +112,17 @@ END;
 CREATE TRIGGER IF NOT EXISTS knowledge_documents_ad AFTER DELETE ON knowledge_documents BEGIN
     INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, topic) VALUES ('delete', old.id, old.title, old.content, old.topic);
 END;
+
+CREATE TABLE IF NOT EXISTS pending_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tool_name TEXT NOT NULL,
+    args_json TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT,
+    expires_at TEXT NOT NULL
+);
 """
 
 
@@ -493,3 +504,51 @@ def get_knowledge_document(doc_id: int):
             "SELECT topic, title, source_url, content, fetched_at FROM knowledge_documents WHERE id = ?",
             (doc_id,),
         ).fetchone()
+
+
+def create_pending_action(tool_name: str, args_json: str, summary: str, ttl_minutes: int = 10) -> int:
+    """Registra uma ação de alto risco aguardando confirmação explícita do
+    criador. Retorna o id da ação pendente."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO pending_actions (tool_name, args_json, summary, expires_at)
+            VALUES (?, ?, ?, datetime('now', ?))
+            """,
+            (tool_name, args_json, summary, f"+{ttl_minutes} minutes"),
+        )
+        return cur.lastrowid
+
+
+def get_pending_action(action_id: int):
+    """Retorna (id, tool_name, args_json, summary, status, created_at, resolved_at, expires_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT id, tool_name, args_json, summary, status, created_at, resolved_at, expires_at
+            FROM pending_actions WHERE id = ?
+            """,
+            (action_id,),
+        ).fetchone()
+
+
+def resolve_pending_action(action_id: int, status: str):
+    """Marca uma ação pendente como 'executada', 'cancelada' ou 'expirada'."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE pending_actions SET status = ?, resolved_at = datetime('now') WHERE id = ?",
+            (status, action_id),
+        )
+
+
+def list_pending_actions():
+    """Lista ações com status 'pending' que ainda não expiraram."""
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT id, tool_name, summary, created_at, expires_at
+            FROM pending_actions
+            WHERE status = 'pending' AND expires_at > datetime('now')
+            ORDER BY created_at
+            """
+        ).fetchall()
