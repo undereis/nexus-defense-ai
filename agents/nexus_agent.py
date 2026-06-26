@@ -613,6 +613,23 @@ def check_ssh_availability(host: str, port: int = 22) -> str:
 
 
 @tool
+def ping_host(host: str, count: int = 4) -> str:
+    """Faz ping num host/IP e retorna latência/perda de pacotes. Use para
+    confirmar conectividade antes ou depois de uma ação de isolamento (ex:
+    "ping fulano antes de bloquear" ou "confirme que voltou a responder
+    depois de liberar")."""
+    return access.ping_host(host, count)
+
+
+@tool
+def traceroute_host(host: str, max_hops: int = 30) -> str:
+    """Roda traceroute até um host/IP e mostra o caminho de rede salto a
+    salto. Use para investigar de onde vem o tráfego de um IP suspeito ou
+    confirmar a rota até um ativo monitorado."""
+    return access.traceroute_host(host, max_hops)
+
+
+@tool
 def run_remote_command(host: str, command: str, user: str = "", port: int = 22) -> str:
     """Executa UM comando remoto via SSH em um host de teste que o criador
     confirmou ter autorização para acessar (ex: 'systemctl status nginx',
@@ -692,6 +709,8 @@ TOOLS = [
     run_zap_baseline,
     curl_request,
     check_ssh_availability,
+    ping_host,
+    traceroute_host,
     run_remote_command,
     configure_network_device,
     check_threat_history,

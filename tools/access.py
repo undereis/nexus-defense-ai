@@ -55,6 +55,45 @@ def http_probe(url: str) -> str:
     return "\n".join(lines)
 
 
+def ping_host(host: str, count: int = 4) -> str:
+    """Faz ping num host/IP (equivalente a `ping -c N`) e retorna a saída
+    bruta: latência, perda de pacotes, se respondeu ou não. Diagnóstico
+    puro, sem nenhum risco — útil para confirmar conectividade antes/depois
+    de uma ação de isolamento."""
+    host = _validate_host(host)
+    count = max(1, min(count, 10))
+    try:
+        result = subprocess.run(
+            ["ping", "-c", str(count), host], capture_output=True, text=True, timeout=count * 3 + 5
+        )
+    except subprocess.TimeoutExpired:
+        return f"Ping para {host} excedeu o tempo limite."
+    output = result.stdout.strip() or result.stderr.strip()
+    return output or f"Ping para {host} não retornou saída (exit {result.returncode})."
+
+
+def traceroute_host(host: str, max_hops: int = 30) -> str:
+    """Roda traceroute até um host/IP e retorna o caminho de rede (cada
+    salto e sua latência). Diagnóstico puro, sem nenhum risco. Pode levar
+    até ~30s se algum salto não responder."""
+    host = _validate_host(host)
+    max_hops = max(1, min(max_hops, 64))
+    timeout_seconds = max_hops * 3 + 10
+    try:
+        result = subprocess.run(
+            # -w 1: espera no máx. 1s por sonda silenciosa, senão um único
+            # salto sem resposta (comum na borda de provedores) pode levar
+            # o comando a exceder o timeout inteiro sem nunca chegar perto
+            # do destino.
+            ["traceroute", "-m", str(max_hops), "-w", "1", host],
+            capture_output=True, text=True, timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Traceroute para {host} excedeu {timeout_seconds}s e foi interrompido."
+    output = result.stdout.strip() or result.stderr.strip()
+    return output or f"Traceroute para {host} não retornou saída (exit {result.returncode})."
+
+
 def check_ssh_port(host: str, port: int = 22) -> str:
     """Verifica se a porta SSH está aberta e captura o banner do serviço,
     sem autenticar nem executar nada no host remoto."""
