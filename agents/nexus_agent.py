@@ -28,6 +28,7 @@ from tools import (
     hydra,
     knowledge_base,
     malware_analysis,
+    metrics,
     mikrotik,
     notify,
     privesc,
@@ -149,6 +150,18 @@ def generate_summary_report(hours: float = 24) -> str:
     quando {CREATOR_NAME} pedir um resumo do que aconteceu, em vez de
     listar eventos crus da auditoria."""
     return report.generate_summary_report(hours)
+
+
+@tool
+def generate_metrics_report(hours: float = 168) -> str:
+    """Gera um relatório de EVIDÊNCIA (padrão: últimos 7 dias, 168h),
+    diferente do resumo executivo: quantas ações de alto risco foram
+    propostas, quantas {CREATOR_NAME} aprovou/cancelou/deixou expirar e em
+    quanto tempo, quantos IPs foram contidos e a latência média entre
+    detecção e contenção. Use quando ele perguntar se o Nexus "está
+    funcionando de verdade", quiser dados pra decidir se a abordagem se
+    sustenta, ou pedir números em vez de narrativa."""
+    return metrics.generate_metrics_report(hours)
 
 
 @tool
@@ -688,6 +701,7 @@ TOOLS = [
     generate_attacker_dossier,
     check_watchdog_health,
     generate_summary_report,
+    generate_metrics_report,
     mikrotik_test_connection,
     mikrotik_status,
     mikrotik_list_interfaces,
