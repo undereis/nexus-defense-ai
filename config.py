@@ -139,6 +139,11 @@ HONEYPOT_SERVICES = os.getenv("HONEYPOT_SERVICES", f"ssh:{HONEYPOT_PORT}")
 # ainda estão rodando, e reinicia os que caíram.
 WATCHDOG_INTERVAL = int(os.getenv("WATCHDOG_INTERVAL", "60"))
 
+# A cada quantos segundos varremos ações de alto risco pendentes (gate de
+# confirmação) e marcamos como expiradas as que passaram do prazo sem
+# confirmação, notificando o criador fora do chat.
+RISK_SWEEP_INTERVAL = int(os.getenv("RISK_SWEEP_INTERVAL", "60"))
+
 # A cada quantas horas a Nexus gera e envia um resumo executivo do período
 # (eventos, ataques, capturas de honeypot, estado do firewall) via notify.
 REPORT_INTERVAL_HOURS = float(os.getenv("REPORT_INTERVAL_HOURS", "24"))

@@ -24,6 +24,7 @@ from config import (
     PROACTIVE_AUDIT_POLL_INTERVAL,
     RECONCILE_POLL_INTERVAL,
     REPORT_INTERVAL_HOURS,
+    RISK_SWEEP_INTERVAL,
     WATCHDOG_INTERVAL,
 )
 from database.db import (
@@ -40,6 +41,7 @@ from tools.policy import classify_threats
 from tools.proactive import check_asset, get_due_assets
 from tools.reconcile import check_and_reconcile, describe
 from tools.report import generate_summary_report
+from tools.risk import sweep_expired
 from tools.threat_intel import is_repeat_offender
 from tools.watchdog import check_and_heal
 
@@ -183,6 +185,17 @@ def watchdog_loop(stop_event: threading.Event):
         stop_event.wait(WATCHDOG_INTERVAL)
 
 
+def risk_sweep_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            expired = sweep_expired()
+            if expired:
+                print(f"\n[Nexus] Ação(ões) pendente(s) expirada(s) sem confirmação: {expired}\n> ", end="", flush=True)
+        except Exception as exc:
+            log_event("risk_sweep_error", None, str(exc))
+        stop_event.wait(RISK_SWEEP_INTERVAL)
+
+
 def report_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
@@ -231,6 +244,8 @@ def main():
     watchdog_thread.start()
     report_thread = threading.Thread(target=report_loop, args=(stop_event,), daemon=True)
     report_thread.start()
+    risk_sweep_thread = threading.Thread(target=risk_sweep_loop, args=(stop_event,), daemon=True)
+    risk_sweep_thread.start()
 
     try:
         while True:

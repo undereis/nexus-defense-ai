@@ -157,6 +157,43 @@ def cancel(action_id: int) -> str:
     return f"Ação {action_id} cancelada."
 
 
+def sweep_expired() -> list[int]:
+    """Marca como 'expirada' toda ação pendente cujo prazo já passou, e
+    notifica fora de banda (mesmo canal usado para o código). Sem isso,
+    uma ação esquecida fica com status 'pending' indefinidamente — só era
+    detectada como expirada se alguém tentasse confirmá-la depois do
+    prazo. Retorna a lista de ids expirados nesta varredura."""
+    from database.db import get_conn
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, tool_name, summary FROM pending_actions
+            WHERE status = 'pending' AND expires_at <= datetime('now')
+            """
+        ).fetchall()
+
+    expired_ids = []
+    for action_id, tool_name, summary in rows:
+        resolve_pending_action(action_id, "expirada")
+        log_event(
+            "pending_action_expired", None, f"id={action_id} tool={tool_name}",
+            action_taken="expirou sem confirmação",
+        )
+        try:
+            from tools import notify
+
+            if notify.is_configured():
+                notify.send_notification(
+                    "Nexus: ação pendente expirou",
+                    f"A ação [{action_id}] '{summary}' expirou sem confirmação e NÃO foi executada.",
+                )
+        except Exception:
+            pass
+        expired_ids.append(action_id)
+    return expired_ids
+
+
 def list_pending() -> str:
     rows = list_pending_actions()
     if not rows:
