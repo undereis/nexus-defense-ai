@@ -135,6 +135,36 @@ def test_request_confirmation_without_kb_query_has_no_reference_block():
     assert "Referência técnica encontrada" not in msg
 
 
+def test_sweep_expired_marks_overdue_pending_actions_and_returns_ids():
+    risk.register_action("test_action_sweep", lambda: "nunca deveria rodar")
+    msg = risk.request_confirmation("test_action_sweep", "resumo sweep", ttl_minutes=0)
+    action_id = _extract_id(msg)
+    code = _real_code(action_id)
+
+    time.sleep(1)
+    expired_ids = risk.sweep_expired()
+
+    assert action_id in expired_ids
+    row = get_pending_action(action_id)
+    assert row[5] == "expirada"
+
+    # depois de expirada pela varredura, confirmar não executa mais
+    result = risk.confirm_and_execute(action_id, code)
+    assert "já está com status 'expirada'" in result
+
+
+def test_sweep_expired_does_not_touch_active_pending_actions():
+    risk.register_action("test_action_not_expired", lambda: "ok")
+    msg = risk.request_confirmation("test_action_not_expired", "resumo ainda válido", ttl_minutes=10)
+    action_id = _extract_id(msg)
+
+    expired_ids = risk.sweep_expired()
+
+    assert action_id not in expired_ids
+    row = get_pending_action(action_id)
+    assert row[5] == "pending"
+
+
 def test_list_pending_shows_only_active_pending_actions():
     risk.register_action("test_action_f", lambda: "ok")
     msg = risk.request_confirmation("test_action_f", "resumo listável")
