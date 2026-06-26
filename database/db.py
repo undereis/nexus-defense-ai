@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     tool_name TEXT NOT NULL,
     args_json TEXT NOT NULL,
     summary TEXT NOT NULL,
+    confirmation_code TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     resolved_at TEXT,
@@ -148,6 +149,10 @@ def init_db():
                 pass  # coluna já existe
         try:
             conn.execute("ALTER TABLE honeypot_hits ADD COLUMN service TEXT NOT NULL DEFAULT 'ssh'")
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
+        try:
+            conn.execute("ALTER TABLE pending_actions ADD COLUMN confirmation_code TEXT NOT NULL DEFAULT ''")
         except sqlite3.OperationalError:
             pass  # coluna já existe
 
@@ -506,26 +511,28 @@ def get_knowledge_document(doc_id: int):
         ).fetchone()
 
 
-def create_pending_action(tool_name: str, args_json: str, summary: str, ttl_minutes: int = 10) -> int:
+def create_pending_action(
+    tool_name: str, args_json: str, summary: str, confirmation_code: str, ttl_minutes: int = 10
+) -> int:
     """Registra uma ação de alto risco aguardando confirmação explícita do
     criador. Retorna o id da ação pendente."""
     with get_conn() as conn:
         cur = conn.execute(
             """
-            INSERT INTO pending_actions (tool_name, args_json, summary, expires_at)
-            VALUES (?, ?, ?, datetime('now', ?))
+            INSERT INTO pending_actions (tool_name, args_json, summary, confirmation_code, expires_at)
+            VALUES (?, ?, ?, ?, datetime('now', ?))
             """,
-            (tool_name, args_json, summary, f"+{ttl_minutes} minutes"),
+            (tool_name, args_json, summary, confirmation_code, f"+{ttl_minutes} minutes"),
         )
         return cur.lastrowid
 
 
 def get_pending_action(action_id: int):
-    """Retorna (id, tool_name, args_json, summary, status, created_at, resolved_at, expires_at)."""
+    """Retorna (id, tool_name, args_json, summary, confirmation_code, status, created_at, resolved_at, expires_at)."""
     with get_conn() as conn:
         return conn.execute(
             """
-            SELECT id, tool_name, args_json, summary, status, created_at, resolved_at, expires_at
+            SELECT id, tool_name, args_json, summary, confirmation_code, status, created_at, resolved_at, expires_at
             FROM pending_actions WHERE id = ?
             """,
             (action_id,),
