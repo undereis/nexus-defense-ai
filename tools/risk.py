@@ -112,7 +112,10 @@ def confirm_and_execute(action_id: int, code: str) -> str:
     if status != "pending":
         return f"Ação {action_id} já está com status '{status}', não pode ser executada de novo."
 
-    if not code or code.strip().lower() != real_code.lower():
+    # Comparação timing-safe: comparar com `!=` direto vaga informação de
+    # timing proporcional a quantos caracteres iniciais batem, reduzindo
+    # o espaço de busca de um ataque por força bruta dentro do TTL.
+    if not code or not secrets.compare_digest(code.strip().lower(), real_code.lower()):
         log_event(
             "pending_action_code_mismatch", None,
             f"id={action_id} tool={tool_name}", action_taken="código incorreto, execução bloqueada",
@@ -124,23 +127,57 @@ def confirm_and_execute(action_id: int, code: str) -> str:
 
     from database.db import get_conn
 
+    # Reivindicação atômica: só uma chamada concorrente consegue mover o
+    # status de 'pending' para 'em_execucao' (UPDATE...WHERE condicional).
+    # Isso fecha a race condition de duas confirmações simultâneas com o
+    # mesmo código executarem a ação duas vezes — sem isso, ambas passavam
+    # da checagem de código (feita acima, antes de qualquer lock) e a
+    # segunda sobrescrevia o resultado da primeira.
     with get_conn() as conn:
-        still_valid = conn.execute(
-            "SELECT 1 FROM pending_actions WHERE id = ? AND expires_at > datetime('now')",
+        claim = conn.execute(
+            "UPDATE pending_actions SET status = 'em_execucao' "
+            "WHERE id = ? AND status = 'pending' AND expires_at > datetime('now')",
             (action_id,),
-        ).fetchone()
-    if not still_valid:
-        resolve_pending_action(action_id, "expirada")
-        log_event("pending_action_expired", None, f"id={action_id} tool={tool_name}", action_taken="expirou")
-        return f"Ação {action_id} expirou antes de ser confirmada. Peça para refazer a solicitação."
+        )
+        claimed = claim.rowcount == 1
+
+    if not claimed:
+        # Não conseguimos reivindicar: ou expirou, ou outra chamada já
+        # está executando/executou. Distingue os dois casos para a
+        # mensagem ficar honesta sobre o que de fato aconteceu.
+        current = get_pending_action(action_id)
+        current_status = current[5] if current else "desconhecido"
+        if current_status == "pending":
+            # Só pode ter sido expiração detectada entre a leitura e a
+            # tentativa de claim (corrida rara, mas possível).
+            resolve_pending_action(action_id, "expirada")
+            log_event("pending_action_expired", None, f"id={action_id} tool={tool_name}", action_taken="expirou")
+            return f"Ação {action_id} expirou antes de ser confirmada. Peça para refazer a solicitação."
+        return (
+            f"Ação {action_id} já estava sendo executada ou foi resolvida por outra confirmação "
+            f"simultânea (status atual: '{current_status}'). Não executada de novo."
+        )
 
     func = _ACTIONS.get(tool_name)
     if func is None:
+        resolve_pending_action(action_id, "erro_interno")
         return f"Erro interno: nenhuma implementação registrada para '{tool_name}'."
 
     kwargs = json.loads(args_json)
     log_event("pending_action_confirmed", None, f"id={action_id} tool={tool_name}", action_taken="confirmado pelo criador")
-    result = func(**kwargs)
+    try:
+        result = func(**kwargs)
+    except Exception as exc:
+        # Se a execução falhar, o status NUNCA deve ficar 'executada' —
+        # isso criava um descompasso entre a auditoria (que diria
+        # "executado") e a realidade (a ação nunca rodou de fato).
+        resolve_pending_action(action_id, "falhou")
+        log_event(
+            "pending_action_failed", None, f"id={action_id} tool={tool_name} error={exc!r}",
+            action_taken="falhou na execução",
+        )
+        return f"Ação {action_id} confirmada, mas a execução falhou: {exc}"
+
     resolve_pending_action(action_id, "executada")
     log_event("pending_action_executed", None, f"id={action_id} tool={tool_name}", action_taken="executado")
     return f"[Ação {action_id} confirmada e executada]\n{result}"

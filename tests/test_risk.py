@@ -2,6 +2,7 @@
 alto risco. Usa o banco de dados real (init_db já roda via conftest/outros
 testes), sem mockar a camada de persistência."""
 
+import threading
 import time
 
 import pytest
@@ -163,6 +164,77 @@ def test_sweep_expired_does_not_touch_active_pending_actions():
     assert action_id not in expired_ids
     row = get_pending_action(action_id)
     assert row[5] == "pending"
+
+
+def test_confirm_and_execute_uses_timing_safe_comparison(monkeypatch):
+    """Garante que a checagem do código passa por secrets.compare_digest,
+    não por != direto — regressão do achado de timing attack."""
+    calls = []
+    monkeypatch.setattr(
+        risk.secrets, "compare_digest", lambda a, b: calls.append((a, b)) or (a == b)
+    )
+    risk.register_action("test_action_timing", lambda: "ok")
+    msg = risk.request_confirmation("test_action_timing", "resumo timing")
+    action_id = _extract_id(msg)
+
+    risk.confirm_and_execute(action_id, _real_code(action_id))
+
+    assert len(calls) == 1
+
+
+def test_concurrent_confirmations_with_correct_code_execute_only_once():
+    """Regressão da race condition: duas threads confirmando a mesma ação
+    ao mesmo tempo, com o código correto, só uma deve conseguir executar
+    a função registrada — a outra deve ver que já foi resolvida."""
+    call_count = {"n": 0}
+    lock = threading.Lock()
+
+    def slow_action():
+        # Simula trabalho real (ex: chamada SSH/API) para alargar a janela
+        # de corrida entre as duas threads.
+        time.sleep(0.05)
+        with lock:
+            call_count["n"] += 1
+        return "ok"
+
+    risk.register_action("test_action_concurrent", slow_action)
+    msg = risk.request_confirmation("test_action_concurrent", "resumo concorrente")
+    action_id = _extract_id(msg)
+    code = _real_code(action_id)
+
+    results = []
+
+    def attempt():
+        results.append(risk.confirm_and_execute(action_id, code))
+
+    threads = [threading.Thread(target=attempt) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert call_count["n"] == 1, "a função registrada não pode rodar mais de uma vez"
+    successes = [r for r in results if "confirmada e executada" in r]
+    assert len(successes) == 1
+
+
+def test_confirm_and_execute_marks_failed_when_action_raises():
+    def boom():
+        raise RuntimeError("falha simulada de execução real")
+
+    risk.register_action("test_action_raises", boom)
+    msg = risk.request_confirmation("test_action_raises", "resumo que falha")
+    action_id = _extract_id(msg)
+
+    result = risk.confirm_and_execute(action_id, _real_code(action_id))
+
+    assert "falhou" in result.lower()
+    row = get_pending_action(action_id)
+    assert row[5] == "falhou"
+
+    # auditoria não pode dizer 'executada' para uma ação que nunca rodou de fato
+    second = risk.confirm_and_execute(action_id, _real_code(action_id))
+    assert "não pode ser executada de novo" in second
 
 
 def test_list_pending_shows_only_active_pending_actions():
