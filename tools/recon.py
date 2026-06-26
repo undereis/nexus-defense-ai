@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import time
+from urllib.parse import urlparse
 
 import requests
 
@@ -79,8 +80,13 @@ def check_security_headers(target: str) -> str:
     """Verifica os headers HTTP de segurança de um site (HSTS, CSP,
     X-Frame-Options etc.), de forma equivalente a securityheaders.com,
     mas rodando localmente sem depender de serviço externo."""
-    target = _validate_target(target)
-    url = target if target.startswith("http") else f"https://{target}"
+    if target.startswith("http://") or target.startswith("https://"):
+        parsed = urlparse(target)
+        _validate_target(parsed.hostname or "")
+        url = target
+    else:
+        target = _validate_target(target)
+        url = f"https://{target}"
     try:
         resp = requests.get(url, timeout=10, allow_redirects=True)
     except requests.RequestException as exc:
