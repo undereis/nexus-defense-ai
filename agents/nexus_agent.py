@@ -41,9 +41,19 @@ from tools import (
     watchdog,
     web_injection,
 )
+from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
 
 _detector = DdosDetector()
+
+risk_gate.register_action("run_exploit_module", exploit.run_module)
+risk_gate.register_action("brute_force_login", hydra.brute_force_login)
+risk_gate.register_action("run_sqlmap_scan", sqlmap_tool.run_sqlmap)
+risk_gate.register_action("mikrotik_add_firewall_rule", mikrotik.add_firewall_rule)
+risk_gate.register_action("mikrotik_remove_firewall_rule", mikrotik.remove_firewall_rule)
+risk_gate.register_action("mikrotik_create_pppoe_user", mikrotik.create_pppoe_user)
+risk_gate.register_action("mikrotik_remove_pppoe_user", mikrotik.remove_pppoe_user)
+risk_gate.register_action("mikrotik_run_command", mikrotik.run_generic_command)
 
 
 @tool
@@ -166,17 +176,26 @@ def mikrotik_add_firewall_rule(
     chain: str, action: str, src_address: str = "", dst_address: str = "",
     protocol: str = "", comment: str = ""
 ) -> str:
-    """Adiciona uma regra de firewall no Mikrotik. chain: input/forward/output.
-    action: accept/drop/reject/log/passthrough. src_address/dst_address
-    podem ser IP único ou faixa CIDR (ex: '45.187.68.91' ou '10.0.0.0/24')."""
-    return mikrotik.add_firewall_rule(chain, action, src_address, dst_address, protocol, comment)
+    """Propõe uma regra de firewall no Mikrotik (chain: input/forward/output;
+    action: accept/drop/reject/log/passthrough; src_address/dst_address
+    podem ser IP único ou CIDR). ALTO RISCO: toca o roteador real da rede —
+    NÃO executa direto, fica pendente até {CREATOR_NAME} confirmar
+    explicitamente (use confirm_pending_action depois que ele disser o id)."""
+    summary = f"Adicionar regra firewall Mikrotik: chain={chain} action={action} src={src_address} dst={dst_address} proto={protocol}"
+    return risk_gate.request_confirmation(
+        "mikrotik_add_firewall_rule", summary,
+        chain=chain, action=action, src_address=src_address,
+        dst_address=dst_address, protocol=protocol, comment=comment,
+    )
 
 
 @tool
 def mikrotik_remove_firewall_rule(rule_id: str) -> str:
-    """Remove uma regra de firewall do Mikrotik pelo ID (".id", ex: '*1'
-    — veja com mikrotik_list_firewall_rules)."""
-    return mikrotik.remove_firewall_rule(rule_id)
+    """Propõe a remoção de uma regra de firewall do Mikrotik pelo ID
+    (".id", ex: '*1' — veja com mikrotik_list_firewall_rules). ALTO RISCO:
+    NÃO executa direto, fica pendente até {CREATOR_NAME} confirmar."""
+    summary = f"Remover regra firewall Mikrotik: rule_id={rule_id}"
+    return risk_gate.request_confirmation("mikrotik_remove_firewall_rule", summary, rule_id=rule_id)
 
 
 @tool
@@ -187,14 +206,22 @@ def mikrotik_list_pppoe_users() -> str:
 
 @tool
 def mikrotik_create_pppoe_user(username: str, password: str, profile: str = "default") -> str:
-    """Cria um novo usuário PPPoE no Mikrotik."""
-    return mikrotik.create_pppoe_user(username, password, profile)
+    """Propõe a criação de um usuário PPPoE no Mikrotik. ALTO RISCO: afeta
+    acesso real de clientes — NÃO executa direto, fica pendente até
+    confirmação explícita."""
+    summary = f"Criar usuário PPPoE Mikrotik: username={username} profile={profile}"
+    return risk_gate.request_confirmation(
+        "mikrotik_create_pppoe_user", summary, username=username, password=password, profile=profile
+    )
 
 
 @tool
 def mikrotik_remove_pppoe_user(username: str) -> str:
-    """Remove um usuário PPPoE do Mikrotik."""
-    return mikrotik.remove_pppoe_user(username)
+    """Propõe a remoção de um usuário PPPoE do Mikrotik. ALTO RISCO: afeta
+    acesso real de clientes — NÃO executa direto, fica pendente até
+    confirmação explícita."""
+    summary = f"Remover usuário PPPoE Mikrotik: username={username}"
+    return risk_gate.request_confirmation("mikrotik_remove_pppoe_user", summary, username=username)
 
 
 @tool
@@ -205,12 +232,15 @@ def mikrotik_list_dhcp_leases() -> str:
 
 @tool
 def mikrotik_run_command(path: str, params: dict | None = None) -> str:
-    """Roda qualquer comando RouterOS no formato de menu (ex:
-    '/ip/address/print', '/interface/wireless/print',
-    '/queue/simple/add' com params). Use para qualquer operação do
-    Mikrotik que não tenha uma tool dedicada — acesso total ao
-    roteador. Toda chamada é registrada na auditoria."""
-    return mikrotik.run_generic_command(path, params)
+    """Propõe rodar qualquer comando RouterOS no formato de menu (ex:
+    '/ip/address/print', '/interface/wireless/print', '/queue/simple/add'
+    com params). Use para qualquer operação do Mikrotik que não tenha tool
+    dedicada — acesso total ao roteador. Comandos só de leitura ('/print')
+    seriam seguros, mas como esta tool genérica pode escrever em qualquer
+    lugar, TODO uso passa pelo gate de confirmação: ALTO RISCO, não executa
+    direto."""
+    summary = f"Comando genérico Mikrotik: path={path} params={params}"
+    return risk_gate.request_confirmation("mikrotik_run_command", summary, path=path, params=params)
 
 
 @tool
@@ -431,12 +461,15 @@ def send_test_notification() -> str:
 
 @tool
 def run_exploit_module(module: str, target: str, options: dict[str, str] | None = None) -> str:
-    """Roda um módulo do Metasploit (auxiliary/scanner ou exploit) contra um
-    alvo autorizado. Ex: module='auxiliary/scanner/ssh/ssh_version',
+    """Propõe rodar um módulo do Metasploit (auxiliary/scanner ou exploit)
+    contra um alvo autorizado. Ex: module='auxiliary/scanner/ssh/ssh_version',
     target='45.187.68.91'. PODE CAUSAR CRASH/INSTABILIDADE REAL no alvo,
-    mesmo autorizado. Só funciona se ALLOW_ACTIVE_EXPLOITATION=true no
-    .env; se desativado, explique isso ao criador em vez de insistir."""
-    return exploit.run_module(module, target, options)
+    mesmo autorizado. Só roda se ALLOW_ACTIVE_EXPLOITATION=true no .env
+    (se desativado, explique isso ao criador em vez de insistir) E DEPOIS
+    de confirmação explícita — esta tool não executa, só cria a ação
+    pendente; use confirm_pending_action só quando o criador pedir."""
+    summary = f"Metasploit: module={module} target={target} options={options}"
+    return risk_gate.request_confirmation("run_exploit_module", summary, module=module, target=target, options=options)
 
 
 @tool
@@ -515,23 +548,30 @@ def brute_force_login(
     port: str = "",
     http_form_path: str = "",
 ) -> str:
-    """Testa credenciais via Hydra contra um serviço (ssh, ftp, mysql, rdp,
-    http-post-form, etc) de um alvo autorizado. Informe username OU
-    userlist (arquivo em workdir/), e password OU wordlist (em workdir/).
-    Só funciona se ALLOW_ACTIVE_EXPLOITATION=true — pode bloquear contas
-    ou gerar alertas no alvo."""
-    return hydra.brute_force_login(target, service, username, userlist, password, wordlist, port, http_form_path)
+    """Propõe testar credenciais via Hydra contra um serviço (ssh, ftp,
+    mysql, rdp, http-post-form, etc) de um alvo autorizado. Informe
+    username OU userlist (arquivo em workdir/), e password OU wordlist
+    (em workdir/). Só roda se ALLOW_ACTIVE_EXPLOITATION=true — pode
+    bloquear contas ou gerar alertas no alvo. Esta tool não executa: cria
+    ação pendente, só roda depois de confirm_pending_action quando o
+    criador pedir explicitamente."""
+    summary = f"Hydra: target={target} service={service} username={username or userlist}"
+    return risk_gate.request_confirmation(
+        "brute_force_login", summary, target=target, service=service, username=username,
+        userlist=userlist, password=password, wordlist=wordlist, port=port, http_form_path=http_form_path,
+    )
 
 
 @tool
 def run_sqlmap_scan(url: str, param: str = "", level: str = "1", risk: str = "1") -> str:
-    """Roda SQLMap contra uma URL (com query string, ex:
+    """Propõe rodar SQLMap contra uma URL (com query string, ex:
     'https://alvo.com/page?id=1') para detectar e confirmar injeção SQL.
     Mais agressivo que test_web_injection — pode efetivamente extrair
-    dados se achar a vulnerabilidade. Só funciona se
-    ALLOW_ACTIVE_EXPLOITATION=true. O achado é salvo no histórico do host
-    (mesma tabela de scan_ports/scan_web_vulnerabilities)."""
-    return sqlmap_tool.run_sqlmap(url, param, level, risk)
+    dados se achar a vulnerabilidade. Só roda se
+    ALLOW_ACTIVE_EXPLOITATION=true E depois de confirmação explícita do
+    criador — esta tool só cria a ação pendente."""
+    summary = f"SQLMap: url={url} param={param} level={level} risk={risk}"
+    return risk_gate.request_confirmation("run_sqlmap_scan", summary, url=url, param=param, level=level, risk=risk)
 
 
 @tool
@@ -557,6 +597,34 @@ def run_remote_command(host: str, command: str, user: str = "", port: int = 22) 
     Toda execução é registrada para auditoria. Nunca use em hosts que o
     criador não autorizou explicitamente."""
     return access.ssh_run_command(host, command, user, port)
+
+
+@tool
+def list_pending_actions() -> str:
+    """Lista ações de alto risco aguardando confirmação explícita do
+    criador (exploração ativa, brute force, SQLMap, escrita no Mikrotik).
+    Use quando o criador perguntar o que está pendente, ou antes de
+    confirmar algo para mostrar o resumo de novo."""
+    return risk_gate.list_pending()
+
+
+@tool
+def confirm_pending_action(action_id: int) -> str:
+    """Executa uma ação de alto risco que estava pendente, identificada
+    pelo id retornado quando a ação foi proposta. SÓ chame isto quando
+    {CREATOR_NAME} disser explicitamente, na mensagem mais recente dele,
+    para confirmar/executar essa ação específica (ex: "confirma a ação 7",
+    "pode executar o id 7"). NUNCA chame isso por iniciativa própria, e
+    nunca encadeie a criação de uma ação pendente com a confirmação dela
+    no mesmo turno — isso anula o propósito do gate de segurança."""
+    return risk_gate.confirm_and_execute(action_id)
+
+
+@tool
+def cancel_pending_action(action_id: int) -> str:
+    """Cancela uma ação de alto risco pendente, sem executá-la. Use quando
+    o criador desistir de uma ação proposta."""
+    return risk_gate.cancel(action_id)
 
 
 TOOLS = [
@@ -616,6 +684,9 @@ TOOLS = [
     generate_social_engineering_content,
     brute_force_login,
     run_sqlmap_scan,
+    list_pending_actions,
+    confirm_pending_action,
+    cancel_pending_action,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
