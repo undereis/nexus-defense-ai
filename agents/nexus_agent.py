@@ -55,6 +55,13 @@ risk_gate.register_action("mikrotik_create_pppoe_user", mikrotik.create_pppoe_us
 risk_gate.register_action("mikrotik_remove_pppoe_user", mikrotik.remove_pppoe_user)
 risk_gate.register_action("mikrotik_run_command", mikrotik.run_generic_command)
 
+from tools import network_devices
+
+risk_gate.register_action(
+    "network_device_run_command",
+    lambda host, command, user, port: network_devices._raw_ssh(host, command, user, port),
+)
+
 
 @tool
 def check_network_status() -> str:
@@ -603,6 +610,34 @@ def run_remote_command(host: str, command: str, user: str = "", port: int = 22) 
 
 
 @tool
+def configure_network_device(
+    vendor: str, host: str, command: str, user: str = "", port: int = 22
+) -> str:
+    """Roda um comando via SSH em um dispositivo de rede ou servidor de um
+    fabricante específico: vendor é 'linux', 'cisco_ios', 'huawei_vrp' ou
+    'ubiquiti_edgeos' (para Mikrotik, use as tools mikrotik_* via API, não
+    esta). Comandos de leitura/diagnóstico conhecidos por vendor (ex:
+    'show version' no Cisco, 'display version' no Huawei, 'uptime' no
+    Linux) executam direto. Qualquer outro comando é tratado como
+    configuração real (ex: 'interface ...', 'no shutdown', 'useradd',
+    'systemctl restart ...') e ALTO RISCO: não executa, fica pendente até
+    {CREATOR_NAME} confirmar com o código enviado fora desta conversa."""
+    from tools import network_devices
+
+    if vendor not in network_devices.VENDORS:
+        return f"Vendor desconhecido: {vendor!r}. Suportados: {', '.join(network_devices.VENDORS)}."
+
+    if network_devices.is_safe_read(vendor, command):
+        return network_devices.run_read_command(vendor, host, command, user, port)
+
+    summary = f"Comando de configuração em {vendor} ({host}): {command}"
+    return risk_gate.request_confirmation(
+        "network_device_run_command", summary, kb_query=f"{vendor} {command}",
+        host=host, command=command, user=user, port=port,
+    )
+
+
+@tool
 def list_pending_actions() -> str:
     """Lista ações de alto risco aguardando confirmação explícita do
     criador (exploração ativa, brute force, SQLMap, escrita no Mikrotik).
@@ -645,6 +680,7 @@ TOOLS = [
     curl_request,
     check_ssh_availability,
     run_remote_command,
+    configure_network_device,
     check_threat_history,
     correlate_threat,
     list_known_attackers,
