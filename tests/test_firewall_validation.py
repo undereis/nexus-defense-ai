@@ -14,34 +14,38 @@ def test_invalid_ips_rejected(ip):
         _validate_ip(ip)
 
 
-def test_block_ip_calls_pfctl_with_validated_ip(monkeypatch):
+class _FakeResult:
+    def __init__(self, returncode=0, stderr=""):
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+def test_block_ip_calls_backend_with_validated_ip(monkeypatch):
     captured = {}
 
-    def fake_run(cmd):
-        captured["cmd"] = cmd
-        class R:
-            returncode = 0
-            stderr = ""
-        return R()
+    def fake_block(ip):
+        captured["ip"] = ip
+        return _FakeResult()
 
-    monkeypatch.setattr("tools.firewall._run", fake_run)
+    monkeypatch.setattr("tools.firewall._backend.block", fake_block)
     monkeypatch.setattr("tools.firewall.record_blocked_ip", lambda ip, reason: None)
     monkeypatch.setattr("tools.firewall.log_event", lambda *a, **k: None)
 
     from tools.firewall import block_ip
 
     result = block_ip("1.2.3.4", "teste")
-    assert "1.2.3.4" in captured["cmd"]
+    assert captured["ip"] == "1.2.3.4"
     assert "isolado" in result.lower() or "bloqueado" in result.lower()
 
 
-def test_block_ip_rejects_invalid_ip_before_running_pfctl(monkeypatch):
+def test_block_ip_rejects_invalid_ip_before_calling_backend(monkeypatch):
     called = {"n": 0}
 
-    def fake_run(cmd):
+    def fake_block(ip):
         called["n"] += 1
+        return _FakeResult()
 
-    monkeypatch.setattr("tools.firewall._run", fake_run)
+    monkeypatch.setattr("tools.firewall._backend.block", fake_block)
     monkeypatch.setattr("tools.firewall.log_event", lambda *a, **k: None)
 
     from tools.firewall import block_ip
@@ -54,13 +58,7 @@ def test_block_ip_rejects_invalid_ip_before_running_pfctl(monkeypatch):
 def test_block_ip_logs_attempt_and_confirmation(monkeypatch):
     logged = []
 
-    def fake_run(cmd):
-        class R:
-            returncode = 0
-            stderr = ""
-        return R()
-
-    monkeypatch.setattr("tools.firewall._run", fake_run)
+    monkeypatch.setattr("tools.firewall._backend.block", lambda ip: _FakeResult())
     monkeypatch.setattr("tools.firewall.record_blocked_ip", lambda ip, reason: None)
     monkeypatch.setattr("tools.firewall.log_event", lambda *a, **k: logged.append(a))
 
@@ -75,13 +73,7 @@ def test_block_ip_logs_attempt_and_confirmation(monkeypatch):
 def test_unblock_ip_logs_attempt_and_confirmation(monkeypatch):
     logged = []
 
-    def fake_run(cmd):
-        class R:
-            returncode = 0
-            stderr = ""
-        return R()
-
-    monkeypatch.setattr("tools.firewall._run", fake_run)
+    monkeypatch.setattr("tools.firewall._backend.unblock", lambda ip: _FakeResult())
     monkeypatch.setattr("tools.firewall.remove_blocked_ip", lambda ip: None)
     monkeypatch.setattr("tools.firewall.log_event", lambda *a, **k: logged.append(a))
 
@@ -93,16 +85,12 @@ def test_unblock_ip_logs_attempt_and_confirmation(monkeypatch):
     assert "firewall_unblock_confirmed" in event_types
 
 
-def test_block_ip_logs_failure_when_pfctl_fails(monkeypatch):
+def test_block_ip_logs_failure_when_backend_fails(monkeypatch):
     logged = []
 
-    def fake_run(cmd):
-        class R:
-            returncode = 1
-            stderr = "erro de teste"
-        return R()
-
-    monkeypatch.setattr("tools.firewall._run", fake_run)
+    monkeypatch.setattr(
+        "tools.firewall._backend.block", lambda ip: _FakeResult(returncode=1, stderr="erro de teste")
+    )
     monkeypatch.setattr("tools.firewall.log_event", lambda *a, **k: logged.append(a))
 
     from tools.firewall import block_ip
