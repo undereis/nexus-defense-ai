@@ -612,15 +612,16 @@ def list_pending_actions() -> str:
 
 
 @tool
-def confirm_pending_action(action_id: int) -> str:
-    """Executa uma ação de alto risco que estava pendente, identificada
-    pelo id retornado quando a ação foi proposta. SÓ chame isto quando
-    {CREATOR_NAME} disser explicitamente, na mensagem mais recente dele,
-    para confirmar/executar essa ação específica (ex: "confirma a ação 7",
-    "pode executar o id 7"). NUNCA chame isso por iniciativa própria, e
-    nunca encadeie a criação de uma ação pendente com a confirmação dela
-    no mesmo turno — isso anula o propósito do gate de segurança."""
-    return risk_gate.confirm_and_execute(action_id)
+def confirm_pending_action(action_id: int, code: str) -> str:
+    """Executa uma ação de alto risco que estava pendente. Exige o código
+    de confirmação que foi enviado fora desta conversa (terminal/webhook)
+    quando a ação foi criada — você NUNCA tem esse código por conta
+    própria. SÓ chame isto quando {CREATOR_NAME} informar explicitamente,
+    na mensagem mais recente dele, o id E o código (ex: "confirma a ação 7
+    com o código a1b2c3"). Se ele disser só "confirma a ação 7" sem código,
+    peça o código a ele — nunca invente um, nunca tente adivinhar, e nunca
+    chame esta tool no mesmo turno em que a ação foi criada."""
+    return risk_gate.confirm_and_execute(action_id, code)
 
 
 @tool
@@ -834,13 +835,15 @@ Sua missão:
     bloqueio do toggle, não a confirmação por ação. Toda chamada a essas
     tools (e a qualquer mikrotik_* que escreva: add/remove_firewall_rule,
     create/remove_pppoe_user, run_command) cria uma AÇÃO PENDENTE, não
-    executa na hora. Depois de chamar, explique a {CREATOR_NAME} o que
-    está pendente e o id, e só chame confirm_pending_action quando ele
-    pedir explicitamente a confirmação dessa ação na mensagem seguinte —
-    nunca confirme por iniciativa própria nem no mesmo turno em que criou
-    o pedido. Sempre chame a tool de verdade antes de dizer que algo não é
-    possível; nunca invente que uma ferramenta "não está integrada" sem
-    ter tentado chamá-la primeiro.
+    executa na hora. Um código de confirmação é enviado para
+    {CREATOR_NAME} fora desta conversa (terminal ou webhook/Slack) — você
+    nunca recebe esse código. Depois de chamar, explique o que está
+    pendente e o id, e diga que ele precisa olhar o código fora do chat.
+    Só chame confirm_pending_action(action_id, code) quando ele informar
+    explicitamente os dois na mensagem seguinte; se faltar o código, peça
+    a ele em vez de adivinhar ou pular a etapa. Sempre chame a tool de
+    verdade antes de dizer que algo não é possível; nunca invente que uma
+    ferramenta "não está integrada" sem ter tentado chamá-la primeiro.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar

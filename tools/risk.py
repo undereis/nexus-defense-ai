@@ -4,17 +4,22 @@ Substitui o modelo anterior de "tudo ou nada por toggle": mesmo com
 ALLOW_ACTIVE_EXPLOITATION=true no .env, ações de alto risco (exploração
 ativa, brute force, SQLi automatizado, escrita real no Mikrotik) não
 executam na hora — ficam pendentes até o criador confirmar
-explicitamente em uma mensagem nova, depois de ver o resumo da ação.
+explicitamente, informando um código que NUNCA é devolvido ao contexto
+do agente.
 
-Isso não é uma barreira criptográfica (o agente que cria a ação pendente
-é o mesmo processo que pode executá-la depois), é uma barreira de
-processo: a confirmação exige uma nova mensagem do criador no chat,
-e cada execução fica registrada na trilha de auditoria com o id da
-ação pendente correspondente. O docstring de confirm_pending_action
-instrui explicitamente o agente a nunca se autoconfirmar.
+Barreira técnica real (não só instrução de prompt): o código de
+confirmação é gerado aqui, enviado por um canal fora da conversa
+(webhook/Slack configurado, ou stdout do terminal local) e nunca incluído
+na string retornada pela tool — ou seja, nunca entra no contexto do LLM
+pelo caminho da própria criação da ação. Para confirmar, o criador
+precisa ter visto o código nesse canal externo e repassá-lo numa
+mensagem nova; só então o agente tem o código para chamar
+confirm_and_execute. Isso fecha a brecha de "o próprio agente cria e
+confirma no mesmo turno", que existia quando o id sozinho bastava.
 """
 
 import json
+import secrets
 
 from database.db import (
     create_pending_action,
@@ -49,42 +54,73 @@ def _quick_kb_reference(query: str) -> str:
     return f"\nReferência técnica encontrada ([{topic}] {title}, fonte: {source_url}):\n  {snippet}"
 
 
+def _deliver_code_out_of_band(action_id: int, summary: str, code: str) -> None:
+    """Manda o código de confirmação por um canal que não passa pelo
+    contexto do agente: webhook/Slack se configurado, e sempre também no
+    stdout do processo (visível no terminal onde o criador roda a Nexus,
+    mas não no texto que volta para o LLM)."""
+    message = f"Ação pendente [{action_id}]: {summary}\nCódigo de confirmação: {code}"
+    print(f"\n>>> NEXUS — CONFIRMAÇÃO NECESSÁRIA >>>\n{message}\n<<<\n")
+    try:
+        from tools import notify
+
+        if notify.is_configured():
+            notify.send_notification("Nexus: confirmação de ação de alto risco", message)
+    except Exception:
+        pass  # entrega no terminal já aconteceu; webhook é bônus, não bloqueante
+
+
 def request_confirmation(
     tool_name: str, summary: str, ttl_minutes: int = 10, kb_query: str = "", **kwargs
 ) -> str:
     """Cria uma ação pendente em vez de executar na hora. Retorna o texto
-    que a tool deve devolver ao agente (e, por extensão, ao criador).
-    Se kb_query for informado, anexa automaticamente a melhor referência
-    da base de conhecimento local relacionada à ação proposta."""
-    action_id = create_pending_action(tool_name, json.dumps(kwargs), summary, ttl_minutes)
+    que a tool deve devolver ao agente — SEM o código de confirmação, que
+    vai só por canal externo (terminal/webhook). Se kb_query for
+    informado, anexa a melhor referência da base de conhecimento local."""
+    code = secrets.token_hex(3)  # 6 caracteres hex, curto o bastante para digitar
+    action_id = create_pending_action(tool_name, json.dumps(kwargs), summary, code, ttl_minutes)
     log_event(
         "pending_action_created",
         None,
         f"id={action_id} tool={tool_name} summary={summary!r}",
         action_taken="aguardando confirmação",
     )
+    _deliver_code_out_of_band(action_id, summary, code)
     kb_note = _quick_kb_reference(kb_query) if kb_query else ""
     return (
         f"AÇÃO DE ALTO RISCO NÃO EXECUTADA — pendente de confirmação (id={action_id}).\n"
         f"Resumo: {summary}"
         f"{kb_note}\n"
-        f"Expira em {ttl_minutes} minutos. Para executar, o criador precisa dizer "
-        f'explicitamente algo como "confirmo a ação {action_id}" em uma nova mensagem.'
+        f"Expira em {ttl_minutes} minutos. Um código de confirmação foi enviado "
+        f"fora desta conversa (terminal/webhook). Para executar, o criador precisa "
+        f"olhar esse código e informá-lo numa mensagem nova — você não tem acesso a "
+        f"ele por nenhum outro meio."
     )
 
 
-def confirm_and_execute(action_id: int) -> str:
-    """Executa uma ação pendente, se ainda válida. NUNCA chame isto sem o
-    criador ter pedido explicitamente a confirmação dessa ação específica
-    na mensagem mais recente dele — não é uma decisão sua, agente."""
+def confirm_and_execute(action_id: int, code: str) -> str:
+    """Executa uma ação pendente, se o código informado bater com o que
+    foi enviado fora desta conversa. NUNCA invente ou adivinhe um código —
+    se o criador não informou um explicitamente na mensagem mais recente
+    dele, pergunte a ele em vez de chamar esta tool."""
     row = get_pending_action(action_id)
     if row is None:
         return f"Ação pendente {action_id} não encontrada."
 
-    _id, tool_name, args_json, summary, status, _created_at, _resolved_at, expires_at = row
+    _id, tool_name, args_json, summary, real_code, status, _created_at, _resolved_at, expires_at = row
 
     if status != "pending":
         return f"Ação {action_id} já está com status '{status}', não pode ser executada de novo."
+
+    if not code or code.strip().lower() != real_code.lower():
+        log_event(
+            "pending_action_code_mismatch", None,
+            f"id={action_id} tool={tool_name}", action_taken="código incorreto, execução bloqueada",
+        )
+        return (
+            f"Código de confirmação incorreto para a ação {action_id}. A ação continua "
+            "pendente — não foi executada."
+        )
 
     from database.db import get_conn
 
@@ -114,8 +150,8 @@ def cancel(action_id: int) -> str:
     row = get_pending_action(action_id)
     if row is None:
         return f"Ação pendente {action_id} não encontrada."
-    if row[4] != "pending":
-        return f"Ação {action_id} já está com status '{row[4]}'."
+    if row[5] != "pending":
+        return f"Ação {action_id} já está com status '{row[5]}'."
     resolve_pending_action(action_id, "cancelada")
     log_event("pending_action_cancelled", None, f"id={action_id}", action_taken="cancelado pelo criador")
     return f"Ação {action_id} cancelada."
