@@ -559,3 +559,20 @@ def list_pending_actions():
             ORDER BY created_at
             """
         ).fetchall()
+
+
+def get_pending_actions_since(hours: float):
+    """Retorna (tool_name, status, created_at, resolved_at) das ações de
+    alto risco propostas nas últimas N horas — base para métricas de
+    governança (quantas foram aprovadas/canceladas/expiraram, e em
+    quanto tempo)."""
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT tool_name, status, created_at, resolved_at
+            FROM pending_actions
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at
+            """,
+            (f"-{hours} hours",),
+        ).fetchall()
