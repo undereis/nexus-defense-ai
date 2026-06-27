@@ -42,6 +42,13 @@ SUPPORTED_SERVICES = {"ssh", "ftp", "http"}
 _lock = threading.Lock()
 _listeners: dict[tuple[str, int], dict] = {}  # (service, port) -> {thread, stop_event, socket}
 
+# (service, port) que o criador parou manualmente via stop(). O watchdog
+# (tools/watchdog.py) respeita isso e NÃO reergue esses serviços — sem
+# isso, ele lia só HONEYPOT_SERVICES do .env e ressuscitava qualquer
+# honeypot pausado manualmente no ciclo seguinte (até 60s depois), o que
+# também gerava uma notificação repetida no terminal a cada ciclo.
+_manually_stopped: set[tuple[str, int]] = set()
+
 
 def _is_safe_to_isolate(ip: str) -> bool:
     """Nunca isola loopback (127.0.0.0/8, ::1) — testar o próprio honeypot
@@ -241,11 +248,15 @@ def start(service: str = "ssh", port: int = 0) -> str:
     with _lock:
         existing = _listeners.get(key)
         if existing and existing["thread"].is_alive():
+            _manually_stopped.discard(key)
             return f"Honeypot {service} já está rodando na porta {port}."
         stop_event = threading.Event()
         thread = threading.Thread(target=_listen_loop, args=(service, port, stop_event), daemon=True)
         _listeners[key] = {"thread": thread, "stop_event": stop_event, "socket": None}
         thread.start()
+        # Iniciar de novo (manual ou via watchdog) cancela qualquer pausa
+        # manual anterior — o pedido mais recente é o que vale.
+        _manually_stopped.discard(key)
     return f"Honeypot {service} iniciado na porta {port}. Qualquer conexão será tratada como ataque confirmado."
 
 
@@ -267,8 +278,15 @@ def stop(service: str | None = None, port: int | None = None) -> str:
                 entry["thread"].join(timeout=3)
                 stopped.append(f"{key[0]}:{key[1]}")
             _listeners.pop(key, None)
+            _manually_stopped.add(key)
 
     return f"Honeypot(s) parado(s): {', '.join(stopped)}" if stopped else "Nenhum honeypot ativo para parar."
+
+
+def is_manually_stopped(service: str, port: int) -> bool:
+    """Usado pelo watchdog para não reerguer um honeypot que o criador
+    pausou de propósito via stop()."""
+    return (service, port) in _manually_stopped
 
 
 def is_running(service: str | None = None) -> bool:

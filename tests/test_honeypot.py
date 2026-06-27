@@ -228,3 +228,28 @@ def test_describe_credentials_after_capture(honeypot_module):
     result = honeypot.describe_credentials()
     assert "1.2.3.4" in result
     assert "admin" in result
+
+
+def test_stop_marks_service_as_manually_stopped(honeypot_module):
+    honeypot, _ = honeypot_module
+    port = _free_port()
+
+    honeypot.start("ssh", port)
+    assert honeypot.is_manually_stopped("ssh", port) is False
+
+    honeypot.stop("ssh", port)
+    assert honeypot.is_manually_stopped("ssh", port) is True
+
+
+def test_start_again_clears_manually_stopped_flag(honeypot_module):
+    """Regressão: depois de start() de novo (manual ou via watchdog), o
+    serviço não deve continuar marcado como 'parado de propósito'."""
+    honeypot, _ = honeypot_module
+    port = _free_port()
+
+    honeypot.start("ssh", port)
+    honeypot.stop("ssh", port)
+    assert honeypot.is_manually_stopped("ssh", port) is True
+
+    honeypot.start("ssh", port)
+    assert honeypot.is_manually_stopped("ssh", port) is False

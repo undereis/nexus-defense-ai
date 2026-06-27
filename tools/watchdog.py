@@ -40,7 +40,7 @@ def check_and_heal() -> list[str]:
     healed = []
 
     for service, port in wanted:
-        if (service, port) not in running:
+        if (service, port) not in running and not honeypot.is_manually_stopped(service, port):
             result = honeypot.start(service, port)
             healed.append(f"{service}:{port}")
             log_event(

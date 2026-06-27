@@ -85,3 +85,24 @@ def test_check_and_heal_only_restarts_the_missing_one(watchdog_module, monkeypat
     healed = watchdog_module.check_and_heal()
     assert healed == ["ftp:2121"]
     assert started == [("ftp", 2121)]
+
+
+def test_check_and_heal_respects_manually_stopped_service(watchdog_module, monkeypatch):
+    """Regressão: watchdog ressuscitando honeypot que o criador parou de
+    propósito via stop() — não deve, mesmo que esteja em HONEYPOT_SERVICES."""
+    monkeypatch.setattr(watchdog_module, "HONEYPOT_ENABLED", True)
+    monkeypatch.setattr(watchdog_module, "HONEYPOT_SERVICES", "ssh:2222,ftp:2121")
+    monkeypatch.setattr(watchdog_module.honeypot, "list_running", lambda: [])
+    monkeypatch.setattr(
+        watchdog_module.honeypot, "is_manually_stopped",
+        lambda service, port: (service, port) == ("ssh", 2222),
+    )
+
+    started = []
+    monkeypatch.setattr(watchdog_module.honeypot, "start", lambda s, p: started.append((s, p)))
+    monkeypatch.setattr(watchdog_module.notify, "send_notification", lambda *a, **k: True)
+
+    healed = watchdog_module.check_and_heal()
+
+    assert healed == ["ftp:2121"]
+    assert ("ssh", 2222) not in started
