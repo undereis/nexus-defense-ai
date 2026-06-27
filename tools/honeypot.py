@@ -209,19 +209,22 @@ def _handle_connection(conn: socket.socket, addr: tuple, port: int, service: str
             log_event("honeypot_error", ip, str(exc))
 
 
-def _listen_loop(service: str, port: int, stop_event: threading.Event):
+def _listen_loop(service: str, port: int, stop_event: threading.Event, ready: threading.Event, bind_error: list):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         server.bind(("0.0.0.0", port))
     except OSError as exc:
         log_event("honeypot_error", None, f"Falha ao abrir porta {port} ({service}): {exc}")
+        bind_error.append(str(exc))
+        ready.set()
         return
     server.listen(20)
     server.settimeout(1.0)
     with _lock:
         if (service, port) in _listeners:
             _listeners[(service, port)]["socket"] = server
+    ready.set()
 
     try:
         while not stop_event.is_set():
@@ -240,7 +243,16 @@ def _listen_loop(service: str, port: int, stop_event: threading.Event):
 
 def start(service: str = "ssh", port: int = 0) -> str:
     """Inicia um honeypot de um serviço numa porta. Idempotente por
-    (service, port): se já estiver rodando essa combinação, avisa."""
+    (service, port): se já estiver rodando essa combinação, avisa.
+
+    Espera a confirmação real do bind antes de reportar sucesso — antes
+    desta correção, start() sempre retornava a mensagem otimista mesmo
+    quando o bind falhava (porta já em uso por outro processo, por
+    exemplo), e quem chamava (inclusive o watchdog) não tinha como saber
+    que na verdade nada subiu. Isso causava um loop silencioso: o
+    watchdog via a thread morta, chamava start() de novo, falhava de
+    novo do mesmo jeito, e reportava 'reergueu' a cada ciclo sem nunca
+    corrigir nada de fato."""
     if service not in SUPPORTED_SERVICES:
         return f"Serviço não suportado: {service}. Opções: {', '.join(sorted(SUPPORTED_SERVICES))}"
     port = port or HONEYPOT_PORT
@@ -251,11 +263,29 @@ def start(service: str = "ssh", port: int = 0) -> str:
             _manually_stopped.discard(key)
             return f"Honeypot {service} já está rodando na porta {port}."
         stop_event = threading.Event()
-        thread = threading.Thread(target=_listen_loop, args=(service, port, stop_event), daemon=True)
+        ready = threading.Event()
+        bind_error: list = []
+        thread = threading.Thread(
+            target=_listen_loop, args=(service, port, stop_event, ready, bind_error), daemon=True
+        )
         _listeners[key] = {"thread": thread, "stop_event": stop_event, "socket": None}
         thread.start()
-        # Iniciar de novo (manual ou via watchdog) cancela qualquer pausa
-        # manual anterior — o pedido mais recente é o que vale.
+
+    ready.wait(timeout=3)
+    if bind_error:
+        with _lock:
+            _listeners.pop(key, None)
+        return (
+            f"Falha ao iniciar honeypot {service} na porta {port}: {bind_error[0]}. "
+            "Provavelmente outro processo já está usando essa porta — verifique com "
+            f"'lsof -i :{port}' antes de tentar de novo."
+        )
+    if not ready.is_set():
+        with _lock:
+            _listeners.pop(key, None)
+        return f"Honeypot {service} na porta {port} não respondeu em 3s — não foi possível confirmar se subiu."
+
+    with _lock:
         _manually_stopped.discard(key)
     return f"Honeypot {service} iniciado na porta {port}. Qualquer conexão será tratada como ataque confirmado."
 

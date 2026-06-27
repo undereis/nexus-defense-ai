@@ -28,20 +28,37 @@ def expected_services() -> list[tuple[str, int]]:
     return expected
 
 
+_FAILURE_MARKERS = ("Falha ao iniciar", "não respondeu em")
+
+
 def check_and_heal() -> list[str]:
     """Verifica se cada honeypot esperado está rodando; reinicia os que
-    caíram. Retorna a lista de (service:port) que precisaram ser
-    reerguidos nesta checagem (vazia se tudo estava ok)."""
+    caíram. Retorna a lista de (service:port) que FORAM DE FATO
+    reerguidos nesta checagem (vazia se tudo estava ok).
+
+    honeypot.start() agora confirma o bind antes de retornar, então o
+    resultado é checado aqui — sem isso, uma falha persistente (porta
+    ocupada por outro processo) fazia o watchdog "curar" para sempre algo
+    que nunca subiu de verdade, notificando sucesso falso a cada ciclo."""
     wanted = expected_services()
     if not wanted:
         return []
 
     running = set(honeypot.list_running())
     healed = []
+    failed = []
 
     for service, port in wanted:
         if (service, port) not in running and not honeypot.is_manually_stopped(service, port):
             result = honeypot.start(service, port)
+            if any(marker in result for marker in _FAILURE_MARKERS):
+                failed.append(f"{service}:{port}")
+                log_event(
+                    "watchdog_heal_failed", None,
+                    f"Honeypot {service}:{port} continua caído: {result}",
+                    action_taken="falhou",
+                )
+                continue
             healed.append(f"{service}:{port}")
             log_event(
                 "watchdog_healed", None,
@@ -53,6 +70,12 @@ def check_and_heal() -> list[str]:
         notify.send_notification(
             "Nexus: watchdog reergueu serviço(s) caído(s)",
             f"Honeypot(s) reiniciado(s): {', '.join(healed)}",
+        )
+    if failed:
+        notify.send_notification(
+            "Nexus: watchdog NÃO conseguiu reerguer serviço(s)",
+            f"Honeypot(s) que continuam caídos (provável conflito de porta): {', '.join(failed)}. "
+            "Verifique se outro processo está usando essas portas.",
         )
 
     return healed
