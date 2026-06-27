@@ -7,12 +7,14 @@ consultar threat_intel, scan_findings, honeypot e geoip separadamente.
 dele, e de onde ele vem"."""
 
 from database.db import (
+    get_event_types_for_ip,
     get_findings_for_host,
+    get_honeypot_services_for_ip,
     get_threat_history,
     list_honeypot_credentials_for_ip,
     list_honeypot_hits_for_ip,
 )
-from tools import geoip
+from tools import geoip, mitre_attack
 from tools.threat_intel import reputation_score
 
 
@@ -80,6 +82,13 @@ def build_dossier(ip: str) -> str:
         severity_signals.append("tentou credenciais reais (possível credential stuffing)")
     if findings:
         severity_signals.append("já auditado anteriormente — correlacione vulnerabilidades")
+
+    # MITRE ATT&CK: traduz os event_types e serviços de honeypot tocados
+    # em técnicas reais do framework, em vez de só listar eventos crus.
+    event_types = get_event_types_for_ip(ip)
+    honeypot_services = get_honeypot_services_for_ip(ip)
+    sections.append("🗺️ " + mitre_attack.summarize_ttps_for_ip(event_types, honeypot_services))
+    sections.append("")
 
     sections.append("⚖️ Veredito:")
     if severity_signals:

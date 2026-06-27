@@ -33,6 +33,7 @@ from tools import (
     malware_analysis,
     metrics,
     mikrotik,
+    mitre_attack,
     notify,
     privesc,
     proactive,
@@ -41,6 +42,7 @@ from tools import (
     report,
     social_engineering,
     sqlmap_tool,
+    threat_feed_lists,
     threat_feeds,
     threat_intel,
     watchdog,
@@ -174,6 +176,15 @@ def generate_attacker_dossier(ip: str) -> str:
 
 
 @tool
+def describe_mitre_ttp(event_type: str) -> str:
+    """Explica a TTP (Tactic/Technique/Procedure) MITRE ATT&CK
+    correspondente a um tipo de evento interno da Nexus (ex:
+    'ddos_severe', 'hydra_attempt', 'sqlmap_attempt'). Use para entender
+    o contexto de um evento específico fora do dossiê completo."""
+    return mitre_attack.describe_ttp(event_type)
+
+
+@tool
 def check_external_threat_feeds(ip: str) -> str:
     """Consulta reputação externa de um IP em AbuseIPDB, VirusTotal e
     Shodan de uma vez (visibilidade global, não só o que a Nexus já viu
@@ -182,6 +193,31 @@ def check_external_threat_feeds(ip: str) -> str:
     a chave, aquela fonte específica avisa que não está configurada, sem
     quebrar as outras."""
     return threat_feeds.correlate_ip(ip)
+
+
+@tool
+def refresh_threat_feed_lists() -> str:
+    """Atualiza as listas globais de IPs/redes maliciosas conhecidas
+    (Spamhaus DROP, Feodo Tracker, Emerging Threats) — todas públicas e
+    gratuitas, sem chave de API. Roda automaticamente em segundo plano,
+    mas pode ser chamado manualmente para forçar atualização agora."""
+    return threat_feed_lists.refresh_all_feeds()
+
+
+@tool
+def check_ip_against_threat_feed_lists(ip: str) -> str:
+    """Verifica se um IP está em alguma das listas globais de ameaça
+    conhecida já baixadas (Spamhaus/Feodo/ET) — diferente de
+    check_external_threat_feeds (que consulta a API sob demanda), isto
+    usa os dados já baixados localmente, então é instantâneo."""
+    return threat_feed_lists.describe_ip_feed_check(ip)
+
+
+@tool
+def describe_threat_feed_status() -> str:
+    """Mostra quantas entradas cada feed de threat intel tem carregadas
+    e quando foi a última atualização."""
+    return threat_feed_lists.describe_feed_status()
 
 
 @tool
@@ -897,7 +933,11 @@ TOOLS = [
     whois_lookup,
     lookup_asn,
     generate_attacker_dossier,
+    describe_mitre_ttp,
     check_external_threat_feeds,
+    refresh_threat_feed_lists,
+    check_ip_against_threat_feed_lists,
+    describe_threat_feed_status,
     check_file_hash_reputation,
     check_watchdog_health,
     generate_summary_report,

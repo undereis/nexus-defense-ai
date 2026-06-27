@@ -119,6 +119,10 @@ DPI_LOG_DIR = BASE_DIR / "workdir" / "dpi"
 # regra — é o estado esperado até a sessão BGP de produção existir.
 EXABGP_API_PIPE = os.getenv("EXABGP_API_PIPE", "")
 
+# A cada quantas horas os feeds globais de threat intel (Spamhaus DROP,
+# Feodo Tracker, Emerging Threats) são atualizados.
+THREAT_FEED_REFRESH_INTERVAL_HOURS = float(os.getenv("THREAT_FEED_REFRESH_INTERVAL_HOURS", "1"))
+
 # Engenharia social (pretexting/phishing simulado) é a única capacidade que
 # manipula PESSOAS reais, não infraestrutura — desativada por padrão, exige
 # habilitação deliberada. Mesmo habilitada, a Nexus só GERA conteúdo (texto);
