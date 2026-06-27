@@ -124,6 +124,15 @@ CREATE TABLE IF NOT EXISTS traffic_baseline_samples (
 
 CREATE INDEX IF NOT EXISTS idx_traffic_baseline_hour_dow ON traffic_baseline_samples(hour_of_day, day_of_week);
 
+CREATE TABLE IF NOT EXISTS bgp_flowspec_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_text TEXT NOT NULL,
+    description TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'announced',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    withdrawn_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tool_name TEXT NOT NULL,
@@ -646,3 +655,38 @@ def count_traffic_samples() -> int:
     with get_conn() as conn:
         row = conn.execute("SELECT COUNT(*) FROM traffic_baseline_samples").fetchone()
         return row[0] if row else 0
+
+
+def record_flowspec_rule(rule_text: str, description: str) -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO bgp_flowspec_rules (rule_text, description) VALUES (?, ?)",
+            (rule_text, description),
+        )
+        return cur.lastrowid
+
+
+def get_flowspec_rule(rule_id: int):
+    """Retorna (id, rule_text, description, status, created_at, withdrawn_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT id, rule_text, description, status, created_at, withdrawn_at "
+            "FROM bgp_flowspec_rules WHERE id = ?",
+            (rule_id,),
+        ).fetchone()
+
+
+def mark_flowspec_rule_withdrawn(rule_id: int):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE bgp_flowspec_rules SET status = 'withdrawn', withdrawn_at = datetime('now') WHERE id = ?",
+            (rule_id,),
+        )
+
+
+def list_active_flowspec_rules():
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT id, description, created_at FROM bgp_flowspec_rules "
+            "WHERE status = 'announced' ORDER BY created_at"
+        ).fetchall()

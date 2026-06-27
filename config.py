@@ -113,6 +113,12 @@ JOHN_TIMEOUT_SECONDS = int(os.getenv("JOHN_TIMEOUT_SECONDS", "300"))
 DPI_INTERFACE = os.getenv("DPI_INTERFACE", "")
 DPI_LOG_DIR = BASE_DIR / "workdir" / "dpi"
 
+# BGP FlowSpec (RFC 5575): caminho do pipe de comando do ExaBGP (o BGP
+# speaker que de fato envia os anúncios para a sessão com o upstream).
+# Vazio = nenhum anúncio real é possível, só construção/validação de
+# regra — é o estado esperado até a sessão BGP de produção existir.
+EXABGP_API_PIPE = os.getenv("EXABGP_API_PIPE", "")
+
 # Engenharia social (pretexting/phishing simulado) é a única capacidade que
 # manipula PESSOAS reais, não infraestrutura — desativada por padrão, exige
 # habilitação deliberada. Mesmo habilitada, a Nexus só GERA conteúdo (texto);
