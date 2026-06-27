@@ -48,6 +48,16 @@ from tools.watchdog import check_and_heal
 _last_alerted: dict[str, float] = {}
 
 
+def _announce(message: str) -> None:
+    """Imprime um aviso vindo de uma thread em background sem embaralhar
+    o que o criador estiver digitando na hora no prompt principal. `\\r`
+    + limpar a linha (`\\033[K`) apaga o que já tinha sido desenhado ali
+    antes de escrever o aviso por cima — sem isso, o aviso ficava
+    intercalado caractere a caractere com o texto que a pessoa digitava,
+    porque input() não sabe que outra thread moveu o cursor."""
+    print(f"\r\033[K\n[Nexus] {message}\n> ", end="", flush=True)
+
+
 def _due_for_alert(ips: list[str], now: float) -> list[str]:
     return [ip for ip in ips if now - _last_alerted.get(ip, 0) >= ALERT_COOLDOWN_SECONDS]
 
@@ -87,7 +97,7 @@ def monitor_loop(stop_event: threading.Event):
                 record_threat_flag(ip)
                 result = firewall.block_ip(ip, reason)
                 record_threat_isolation(ip)
-                print(f"\n[Nexus] AÇÃO AUTOMÁTICA: {result} ({reason})\n> ", end="", flush=True)
+                _announce(f"AÇÃO AUTOMÁTICA: {result} ({reason})")
                 send_notification("Nexus: IP isolado automaticamente", f"{ip} — {reason}\n{result}")
 
                 prior_findings = get_findings_for_host(ip, limit=3)
@@ -113,9 +123,9 @@ def monitor_loop(stop_event: threading.Event):
                     f"limite de conexões na janela de monitoramento e são suspeitos de DDoS: "
                     f"{', '.join(due_moderate)}. Avalie e decida se deve isolá-los, explicando o motivo."
                 )
-                print(f"\n[Nexus] Anomalia detectada, analisando...")
+                _announce("Anomalia detectada, analisando...")
                 reply = ask_agent(alert)
-                print(f"\n[Nexus] {reply}\n> ", end="", flush=True)
+                _announce(reply)
         except Exception as exc:
             log_event("monitor_error", None, str(exc))
         stop_event.wait(MONITOR_POLL_INTERVAL)
@@ -127,7 +137,7 @@ def proactive_audit_loop(stop_event: threading.Event):
             for host in get_due_assets():
                 changed, summary = check_asset(host)
                 if changed:
-                    print(f"\n[Nexus] Auditoria proativa detectou mudança em {host}, analisando...")
+                    _announce(f"Auditoria proativa detectou mudança em {host}, analisando...")
                     log_event("proactive_audit_changed", host, "Achado diferente do último scan")
                     send_notification(
                         "Nexus: mudança detectada em auditoria proativa",
@@ -138,7 +148,7 @@ def proactive_audit_loop(stop_event: threading.Event):
                         f"autorizou) e o resultado mudou desde a última vez. Novo resultado:\n\n"
                         f"{summary}\n\nMe avise resumidamente o que mudou e se é preocupante."
                     )
-                    print(f"\n[Nexus] {reply}\n> ", end="", flush=True)
+                    _announce(reply)
                 else:
                     log_event("proactive_audit_unchanged", host, "Sem mudanças desde o último scan")
         except Exception as exc:
@@ -153,7 +163,7 @@ def reconcile_loop(stop_event: threading.Event):
             if result.has_drift:
                 description = describe(result)
                 log_event("firewall_drift", None, description)
-                print(f"\n[Nexus] {description}\n> ", end="", flush=True)
+                _announce(description)
                 send_notification("Nexus: drift detectado no firewall", description)
                 ask_agent(
                     "ALERTA: detectei e corrigi divergência entre o que eu achava que estava "
@@ -179,7 +189,7 @@ def watchdog_loop(stop_event: threading.Event):
         try:
             healed = check_and_heal()
             if healed:
-                print(f"\n[Nexus] Watchdog reergueu: {', '.join(healed)}\n> ", end="", flush=True)
+                _announce(f"Watchdog reergueu: {', '.join(healed)}")
         except Exception as exc:
             log_event("watchdog_error", None, str(exc))
         stop_event.wait(WATCHDOG_INTERVAL)
@@ -190,7 +200,7 @@ def risk_sweep_loop(stop_event: threading.Event):
         try:
             expired = sweep_expired()
             if expired:
-                print(f"\n[Nexus] Ação(ões) pendente(s) expirada(s) sem confirmação: {expired}\n> ", end="", flush=True)
+                _announce(f"Ação(ões) pendente(s) expirada(s) sem confirmação: {expired}")
         except Exception as exc:
             log_event("risk_sweep_error", None, str(exc))
         stop_event.wait(RISK_SWEEP_INTERVAL)
