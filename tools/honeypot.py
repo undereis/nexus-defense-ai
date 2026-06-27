@@ -5,7 +5,7 @@ tráfego — pode ter falso positivo), o honeypot é uma porta que não
 serve nenhum propósito real: ninguém deveria conectar nela. Qualquer
 conexão é, por definição, alguém varrendo a rede.
 
-Suporta 3 perfis de serviço simultâneos:
+Suporta 7 perfis de serviço simultâneos:
 - ssh: só banner falso (protocolo SSH real é criptografado, não dá pra
   simular um login sem implementar o handshake completo).
 - ftp: protocolo texto simples — captura USER/PASS reais que o
@@ -13,6 +13,25 @@ Suporta 3 perfis de serviço simultâneos:
   capturada.
 - http: serve uma página de login HTTP falsa; captura usuário/senha de
   qualquer POST recebido, sempre responde com erro de credencial.
+- telnet: protocolo texto simples (sem negociação RFC 854 completa, só
+  o prompt login/password que a maioria das ferramentas de varredura
+  automatizada — ex: bots estilo Mirai — já entende sem negociação).
+  Captura usuário/senha reais.
+- mysql: handshake real do protocolo MySQL v10 (mesma estrutura de
+  pacote que um servidor de verdade manda) — convincente o bastante
+  para clientes MySQL reais tentarem autenticar. Extrai o usuário do
+  pacote de resposta de autenticação (best-effort, parsing posicional).
+- elasticsearch: responde como um cluster Elasticsearch real na rota
+  raiz (GET /), o suficiente para ferramentas de descoberta (ex:
+  Shodan, masscan+banner) classificarem como ES de verdade. Qualquer
+  requisição é tratada como comprometimento confirmado — ES sem auth
+  exposto não devia receber NENHUMA requisição legítima.
+- rdp: completa o handshake TPKT/X.224 inicial (Connection Request ->
+  Connection Confirm), o suficiente para scanners RDP-aware
+  reconhecerem como um listener RDP real. NÃO implementa
+  TLS/CredSSP/NLA completo — não captura credencial de login, só
+  confirma que algo "RDP-aware" tocou a porta (extrai o cookie
+  mstshash, quando presente, como pista de usuário).
 
 O isolamento do IP é imediato e automático (nunca para loopback) — não
 depende de ALLOW_ACTIVE_EXPLOITATION, porque bloquear IP sempre foi
@@ -22,6 +41,7 @@ capacidade "core" da Nexus.
 import ipaddress
 import re
 import socket
+import struct
 import threading
 from urllib.parse import parse_qs
 
@@ -37,7 +57,7 @@ from database.db import (
 from tools import firewall, notify
 from tools.threat_intel import record_confirmed_isolation
 
-SUPPORTED_SERVICES = {"ssh", "ftp", "http"}
+SUPPORTED_SERVICES = {"ssh", "ftp", "http", "telnet", "mysql", "elasticsearch", "rdp"}
 
 _lock = threading.Lock()
 _listeners: dict[tuple[str, int], dict] = {}  # (service, port) -> {thread, stop_event, socket}
@@ -195,7 +215,170 @@ def _handle_http(conn: socket.socket, ip: str, port: int):
         conn.close()
 
 
-_HANDLERS = {"ssh": _handle_ssh, "ftp": _handle_ftp, "http": _handle_http}
+def _handle_telnet(conn: socket.socket, ip: str, port: int):
+    """Sem negociação IAC completa (RFC 854) — só o prompt texto que a
+    maioria das ferramentas de varredura automatizada (scripts estilo
+    Mirai, masscan+banner) já entende sem negociação nenhuma."""
+    username = None
+    password = None
+    buffer = b""
+    try:
+        conn.settimeout(10)
+        conn.sendall(b"\r\nUbuntu 22.04 LTS\r\nlogin: ")
+
+        while password is None:
+            chunk = conn.recv(256)
+            if not chunk:
+                break
+            buffer += chunk
+            if b"\n" not in buffer and b"\r" not in buffer:
+                continue
+            line = re.split(rb"[\r\n]", buffer, maxsplit=1)[0]
+            buffer = buffer[len(line):].lstrip(b"\r\n")
+
+            if username is None:
+                username = line.decode(errors="replace").strip()
+                conn.sendall(b"Password: ")
+                buffer = b""
+                continue
+            password = line.decode(errors="replace").strip()
+
+        if username or password:
+            _process_credential(ip, port, "telnet", username, password)
+
+        conn.sendall(b"\r\nLogin incorrect\r\n")
+    except (OSError, socket.timeout):
+        pass
+    finally:
+        conn.close()
+
+
+def _build_mysql_handshake() -> bytes:
+    """Monta um pacote de handshake real do protocolo MySQL v10 — mesma
+    estrutura de bytes que um servidor MySQL/MariaDB de verdade manda,
+    o suficiente para um cliente mysql real tentar autenticar."""
+    protocol_version = b"\x0a"
+    server_version = b"8.0.32-0ubuntu0.22.04.2\x00"
+    thread_id = struct.pack("<I", 12345)
+    auth_data_1 = b"NEXUSscn"  # 8 bytes
+    filler = b"\x00"
+    capability_flags_lower = b"\xff\xf7"
+    character_set = b"\x08"
+    status_flags = b"\x02\x00"
+    capability_flags_upper = b"\xff\x81"
+    auth_plugin_data_len = b"\x15"  # 21
+    reserved = b"\x00" * 10
+    auth_data_2 = b"honeypotAuthData2\x00"  # 13 bytes (auth_plugin_data_len - 8), null-terminated
+    auth_plugin_name = b"mysql_native_password\x00"
+
+    payload = (
+        protocol_version + server_version + thread_id + auth_data_1 + filler
+        + capability_flags_lower + character_set + status_flags + capability_flags_upper
+        + auth_plugin_data_len + reserved + auth_data_2 + auth_plugin_name
+    )
+    header = struct.pack("<I", len(payload))[:3] + b"\x00"  # length (3 bytes LE) + sequence 0
+    return header + payload
+
+
+def _parse_mysql_username(packet: bytes) -> str | None:
+    """Extrai o usuário do HandshakeResponse41 do cliente. Posição fixa:
+    4 bytes de header do pacote + 4 (capability flags) + 4 (max packet
+    size) + 1 (charset) + 23 (reserved) = 36 bytes, depois string
+    null-terminada. Best-effort: parsing posicional simples, não cobre
+    todas as variações do protocolo (ex: handshake pre-4.1)."""
+    try:
+        if len(packet) < 37:
+            return None
+        rest = packet[36:]
+        end = rest.index(b"\x00")
+        username = rest[:end].decode(errors="replace")
+        return username or None
+    except (ValueError, IndexError):
+        return None
+
+
+def _handle_mysql(conn: socket.socket, ip: str, port: int):
+    try:
+        conn.settimeout(10)
+        conn.sendall(_build_mysql_handshake())
+        response = conn.recv(4096)
+        username = _parse_mysql_username(response) if response else None
+        if username:
+            _process_credential(ip, port, "mysql", username, None)
+
+        # ERR packet: access denied (ER_ACCESS_DENIED_ERROR = 1045)
+        err_payload = b"\xff" + struct.pack("<H", 1045) + b"#28000" + b"Access denied"
+        err_header = struct.pack("<I", len(err_payload))[:3] + b"\x01"
+        conn.sendall(err_header + err_payload)
+    except (OSError, socket.timeout):
+        pass
+    finally:
+        conn.close()
+
+
+_ES_ROOT_RESPONSE = b"""HTTP/1.1 200 OK\r
+Content-Type: application/json\r
+Connection: close\r
+\r
+{"name":"node-1","cluster_name":"xfiber-cluster","cluster_uuid":"a1b2c3d4e5f6",\
+"version":{"number":"7.17.9","build_flavor":"default","lucene_version":"8.11.1"},\
+"tagline":"You Know, for Search"}"""
+
+
+def _handle_elasticsearch(conn: socket.socket, ip: str, port: int):
+    """Qualquer requisição é tratada como comprometimento confirmado — um
+    Elasticsearch sem autenticação exposto não deveria receber NENHUMA
+    requisição legítima vinda de fora. Captura o método+caminho
+    requisitado como evidência (reaproveitando o campo de credencial)."""
+    try:
+        conn.settimeout(10)
+        request = conn.recv(4096)
+        if request:
+            first_line = request.split(b"\r\n", 1)[0].decode(errors="replace")
+            _process_credential(ip, port, "elasticsearch", first_line.strip(), None)
+        conn.sendall(_ES_ROOT_RESPONSE)
+    except (OSError, socket.timeout):
+        pass
+    finally:
+        conn.close()
+
+
+_MSTSHASH_RE = re.compile(rb"Cookie:\s*mstshash=([\w.-]+)", re.IGNORECASE)
+
+
+def _handle_rdp(conn: socket.socket, ip: str, port: int):
+    """Completa só o handshake inicial TPKT/X.224 (Connection Request ->
+    Connection Confirm) — o suficiente para um scanner RDP-aware
+    reconhecer a porta como um listener RDP real. NÃO implementa
+    TLS/CredSSP/NLA: não captura login de verdade, só o cookie
+    mstshash (pista de usuário) quando o cliente manda um, igual
+    ferramentas reais de varredura RDP fazem."""
+    try:
+        conn.settimeout(10)
+        request = conn.recv(4096)
+        if not request:
+            return
+
+        match = _MSTSHASH_RE.search(request)
+        if match:
+            username_hint = match.group(1).decode(errors="replace")
+            _process_credential(ip, port, "rdp", username_hint, None)
+
+        # X.224 Connection Confirm mínimo, envelopado em TPKT.
+        x224_cc = b"\xd0\x00\x00\x12\x34\x00\x02\x00\x08\x00\x00\x00\x00\x00"
+        tpkt_header = b"\x03\x00" + struct.pack(">H", len(x224_cc) + 4)
+        conn.sendall(tpkt_header + x224_cc)
+    except (OSError, socket.timeout):
+        pass
+    finally:
+        conn.close()
+
+
+_HANDLERS = {
+    "ssh": _handle_ssh, "ftp": _handle_ftp, "http": _handle_http,
+    "telnet": _handle_telnet, "mysql": _handle_mysql,
+    "elasticsearch": _handle_elasticsearch, "rdp": _handle_rdp,
+}
 
 
 def _handle_connection(conn: socket.socket, addr: tuple, port: int, service: str):
