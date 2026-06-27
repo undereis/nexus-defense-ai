@@ -113,6 +113,17 @@ CREATE TRIGGER IF NOT EXISTS knowledge_documents_ad AFTER DELETE ON knowledge_do
     INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, topic) VALUES ('delete', old.id, old.title, old.content, old.topic);
 END;
 
+CREATE TABLE IF NOT EXISTS traffic_baseline_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    hour_of_day INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    total_connections INTEGER NOT NULL,
+    distinct_ips INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_traffic_baseline_hour_dow ON traffic_baseline_samples(hour_of_day, day_of_week);
+
 CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tool_name TEXT NOT NULL,
@@ -599,3 +610,39 @@ def get_pending_actions_since(hours: float):
             """,
             (f"-{hours} hours",),
         ).fetchall()
+
+
+def record_traffic_sample(hour_of_day: int, day_of_week: int, total_connections: int, distinct_ips: int):
+    """Registra uma amostra de volume de tráfego (total de conexões e IPs
+    distintos), marcada por hora do dia (0-23) e dia da semana (0=segunda
+    .. 6=domingo) — base para aprender o padrão normal por horário."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO traffic_baseline_samples (hour_of_day, day_of_week, total_connections, distinct_ips) "
+            "VALUES (?, ?, ?, ?)",
+            (hour_of_day, day_of_week, total_connections, distinct_ips),
+        )
+
+
+def get_traffic_samples_for_slot(hour_of_day: int, day_of_week: int, exclude_last_n_minutes: float = 0):
+    """Retorna (total_connections, distinct_ips) de todas as amostras
+    históricas para o mesmo horário/dia da semana — a base para calcular
+    média e desvio padrão do que é 'normal' nesse slot."""
+    with get_conn() as conn:
+        if exclude_last_n_minutes > 0:
+            return conn.execute(
+                "SELECT total_connections, distinct_ips FROM traffic_baseline_samples "
+                "WHERE hour_of_day = ? AND day_of_week = ? AND timestamp < datetime('now', ?)",
+                (hour_of_day, day_of_week, f"-{exclude_last_n_minutes} minutes"),
+            ).fetchall()
+        return conn.execute(
+            "SELECT total_connections, distinct_ips FROM traffic_baseline_samples "
+            "WHERE hour_of_day = ? AND day_of_week = ?",
+            (hour_of_day, day_of_week),
+        ).fetchall()
+
+
+def count_traffic_samples() -> int:
+    with get_conn() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM traffic_baseline_samples").fetchone()
+        return row[0] if row else 0

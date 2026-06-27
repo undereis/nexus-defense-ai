@@ -18,6 +18,7 @@ from database.db import (
 )
 from tools import (
     access,
+    anomaly,
     audit,
     cracking,
     dossier,
@@ -38,6 +39,7 @@ from tools import (
     report,
     social_engineering,
     sqlmap_tool,
+    threat_feeds,
     threat_intel,
     watchdog,
     web_injection,
@@ -63,6 +65,19 @@ risk_gate.register_action(
     "network_device_run_command",
     lambda host, command, user, port: network_devices._raw_ssh(host, command, user, port),
 )
+
+
+@tool
+def check_traffic_anomaly() -> str:
+    """Compara o volume atual de tráfego com a baseline estatística
+    aprendida para este mesmo horário/dia da semana (média e desvio
+    padrão de amostras históricas reais) e diz se está fora do padrão
+    normal (z-score). Diferente de check_network_status (que olha
+    threshold fixo por IP), isto detecta desvio do padrão GERAL da rede,
+    mesmo sem nenhum IP individual estourando o limite. Só fica útil
+    depois de dias/semanas de uso real acumulando amostras."""
+    counts = _detector.snapshot_counts()
+    return anomaly.describe_anomaly_status(sum(counts.values()))
 
 
 @tool
@@ -149,6 +164,26 @@ def generate_attacker_dossier(ip: str) -> str:
     segurança já feitas, e geolocalização/ASN. Use isso para uma visão
     completa antes de decidir uma ação importante sobre um IP."""
     return dossier.build_dossier(ip)
+
+
+@tool
+def check_external_threat_feeds(ip: str) -> str:
+    """Consulta reputação externa de um IP em AbuseIPDB, VirusTotal e
+    Shodan de uma vez (visibilidade global, não só o que a Nexus já viu
+    na sua própria rede). Cada fonte exige uma chave de API gratuita no
+    .env (ABUSEIPDB_API_KEY, VIRUSTOTAL_API_KEY, SHODAN_API_KEY) — sem
+    a chave, aquela fonte específica avisa que não está configurada, sem
+    quebrar as outras."""
+    return threat_feeds.correlate_ip(ip)
+
+
+@tool
+def check_file_hash_reputation(file_hash: str) -> str:
+    """Consulta a reputação de um hash de arquivo (MD5/SHA1/SHA256) no
+    VirusTotal — use o hash que analyze_suspicious_file já calculou para
+    um arquivo suspeito, antes de decidir se vale investigar mais a
+    fundo."""
+    return threat_feeds.check_virustotal_hash(file_hash)
 
 
 @tool
@@ -718,6 +753,7 @@ def cancel_pending_action(action_id: int) -> str:
 
 TOOLS = [
     check_network_status,
+    check_traffic_anomaly,
     isolate_ip,
     release_ip,
     list_isolated_ips,
@@ -740,6 +776,8 @@ TOOLS = [
     whois_lookup,
     lookup_asn,
     generate_attacker_dossier,
+    check_external_threat_feeds,
+    check_file_hash_reputation,
     check_watchdog_health,
     generate_summary_report,
     generate_metrics_report,
