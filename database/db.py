@@ -745,3 +745,25 @@ def count_feed_entries_by_source() -> list[tuple[str, int, str]]:
         return conn.execute(
             "SELECT source, COUNT(*), MAX(fetched_at) FROM threat_feed_entries GROUP BY source"
         ).fetchall()
+
+
+def get_distinct_honeypot_ips_since(hours: float) -> list[str]:
+    """Retorna os IPs distintos que tocaram algum honeypot nas últimas N
+    horas — base para comparar fingerprints entre atacantes."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT ip FROM honeypot_hits WHERE timestamp >= datetime('now', ?)",
+            (f"-{hours} hours",),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+
+def get_honeypot_hits_chronological_for_ip(ip: str) -> list[tuple[int, str, str]]:
+    """Retorna (port, service, timestamp) de TODAS as conexões de um IP
+    em ordem cronológica (mais antiga primeiro) — base para construir o
+    fingerprint comportamental (sequência de portas + timing)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT port, service, timestamp FROM honeypot_hits WHERE ip = ? ORDER BY id ASC",
+            (ip,),
+        ).fetchall()
