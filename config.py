@@ -108,6 +108,11 @@ WORKDIR = BASE_DIR / "workdir"
 HASHCAT_TIMEOUT_SECONDS = int(os.getenv("HASHCAT_TIMEOUT_SECONDS", "300"))
 JOHN_TIMEOUT_SECONDS = int(os.getenv("JOHN_TIMEOUT_SECONDS", "300"))
 
+# DPI (Suricata): interface a capturar (vazio = não inicia automaticamente,
+# só via tool explícita) e diretório onde o eve.json (log de alertas) fica.
+DPI_INTERFACE = os.getenv("DPI_INTERFACE", "")
+DPI_LOG_DIR = BASE_DIR / "workdir" / "dpi"
+
 # Engenharia social (pretexting/phishing simulado) é a única capacidade que
 # manipula PESSOAS reais, não infraestrutura — desativada por padrão, exige
 # habilitação deliberada. Mesmo habilitada, a Nexus só GERA conteúdo (texto);

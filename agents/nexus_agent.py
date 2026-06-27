@@ -22,6 +22,8 @@ from tools import (
     audit,
     cracking,
     dossier,
+    dpi,
+    forensics,
     exploit,
     firewall,
     geoip,
@@ -512,6 +514,36 @@ def stop_honeypot(service: str = "", port: int = 0) -> str:
 
 
 @tool
+def start_dpi(interface: str = "") -> str:
+    """Inicia DPI (Deep Packet Inspection) via Suricata numa interface de
+    rede — inspeciona o CONTEÚDO do tráfego contra assinaturas
+    conhecidas, não só o volume. Se interface vazio, usa DPI_INTERFACE
+    do .env. NUNCA VALIDADO contra tráfego real neste ambiente."""
+    return dpi.start(interface)
+
+
+@tool
+def stop_dpi() -> str:
+    """Para o processo Suricata (DPI), se estiver rodando."""
+    return dpi.stop()
+
+
+@tool
+def list_dpi_alerts(limit: int = 20) -> str:
+    """Lista os alertas mais recentes de DPI (assinatura, categoria,
+    severidade, IPs envolvidos) — o que estava DENTRO do tráfego que o
+    Suricata já capturou, não só contagem de conexões."""
+    return dpi.list_alerts(limit)
+
+
+@tool
+def summarize_dpi_alerts() -> str:
+    """Agrega todos os alertas de DPI já registrados por assinatura, para
+    uma visão geral do que mais aparece no tráfego inspecionado."""
+    return dpi.describe_alert_summary()
+
+
+@tool
 def list_honeypot_captures() -> str:
     """Lista os IPs que conectaram nas portas-armadilha (honeypot), do mais
     recente ao mais antigo, e quais honeypots estão ativos agora."""
@@ -594,6 +626,43 @@ def analyze_suspicious_file(filename: str) -> str:
     o arquivo — é só leitura e inspeção. Use para triagem inicial antes de
     decidir se vale enviar para uma sandbox completa ou VirusTotal."""
     return malware_analysis.analyze_file(filename)
+
+
+@tool
+def list_forensics_plugins() -> str:
+    """Lista os plugins mais comuns do Volatility3 (análise de memória)
+    por categoria (windows/linux/mac), como referência antes de chamar
+    run_memory_forensics."""
+    return forensics.list_volatility_plugins()
+
+
+@tool
+def run_memory_forensics(image_file: str, plugin: str) -> str:
+    """Roda um plugin do Volatility3 contra uma imagem de memória em
+    workdir/ (ex: 'memdump.raw'). plugin no formato 'categoria.Nome'
+    (ex: 'windows.pslist', 'linux.bash' — ver list_forensics_plugins).
+    Read-only sobre a imagem. NUNCA VALIDADO contra imagem real neste
+    ambiente — se o resultado parecer estranho, desconfie e valide
+    manualmente."""
+    return forensics.run_memory_analysis(image_file, plugin)
+
+
+@tool
+def generate_filesystem_timeline(image_file: str) -> str:
+    """Gera uma timeline cronológica de criação/modificação/acesso/deleção
+    de arquivos a partir de uma imagem de disco em workdir/, usando o
+    Sleuth Kit (mesmo motor do Autopsy). Read-only. NUNCA VALIDADO contra
+    imagem real neste ambiente."""
+    return forensics.filesystem_timeline(image_file)
+
+
+@tool
+def recover_deleted_files(image_file: str, output_subdir: str) -> str:
+    """Recupera arquivos deletados de uma imagem de disco em workdir/,
+    salvando em workdir/<output_subdir>/. Read-only sobre a imagem
+    original (só escreve no diretório de saída). NUNCA VALIDADO contra
+    imagem real neste ambiente."""
+    return forensics.recover_deleted_files(image_file, output_subdir)
 
 
 @tool
@@ -803,6 +872,10 @@ TOOLS = [
     check_firewall_integrity,
     check_audit_integrity,
     create_audit_checkpoint,
+    start_dpi,
+    stop_dpi,
+    list_dpi_alerts,
+    summarize_dpi_alerts,
     start_honeypot,
     stop_honeypot,
     list_honeypot_captures,
@@ -814,6 +887,10 @@ TOOLS = [
     test_web_injection,
     enumerate_privilege_escalation,
     analyze_suspicious_file,
+    list_forensics_plugins,
+    run_memory_forensics,
+    generate_filesystem_timeline,
+    recover_deleted_files,
     generate_social_engineering_content,
     brute_force_login,
     run_sqlmap_scan,
