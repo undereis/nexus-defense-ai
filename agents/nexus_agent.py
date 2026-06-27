@@ -27,7 +27,9 @@ from tools import (
     fingerprint,
     firewall,
     geoip,
+    honeynet,
     honeypot,
+    honeytokens,
     hydra,
     ioc_correlation,
     knowledge_base,
@@ -581,8 +583,13 @@ def create_audit_checkpoint() -> str:
 @tool
 def start_honeypot(service: str = "ssh", port: int = 0) -> str:
     """Inicia uma porta-armadilha (honeypot) de um serviço específico:
-    'ssh' (banner falso), 'ftp' (captura usuário/senha reais digitados),
-    ou 'http' (página de login falsa, captura usuário/senha do POST).
+    'ssh' (banner falso), 'ftp'/'telnet' (captura usuário/senha reais
+    digitados), 'http' (página de login falsa, captura usuário/senha do
+    POST), 'mysql' (handshake real do protocolo, captura usuário do
+    pacote de autenticação), 'elasticsearch' (responde como cluster ES
+    real, qualquer requisição é comprometimento confirmado), ou 'rdp'
+    (completa handshake TPKT/X.224 inicial, extrai pista de usuário do
+    cookie mstshash quando presente — não captura login completo).
     Qualquer IP que conectar é tratado como ataque confirmado e isolado
     automaticamente, sem threshold. Se port=0, usa a porta padrão."""
     return honeypot.start(service, port)
@@ -708,6 +715,105 @@ def analyze_suspicious_file(filename: str) -> str:
     o arquivo — é só leitura e inspeção. Use para triagem inicial antes de
     decidir se vale enviar para uma sandbox completa ou VirusTotal."""
     return malware_analysis.analyze_file(filename)
+
+
+@tool
+def plant_decoy_file(kind: str, directory: str) -> str:
+    """Planta um arquivo-isca convincente (kind: 'aws_credentials',
+    'ssh_key', ou 'database_backup') num diretório real (ex: pasta de
+    backups, área compartilhada). Tem uma URL de callback única embutida
+    — quando alguém abre o arquivo, em qualquer lugar, e o link
+    "telefona pra casa", é comprometimento confirmado (ameaça interna ou
+    exfiltração). Exige CANARY_BASE_URL configurado e o listener rodando
+    (start_canary_listener)."""
+    return honeytokens.plant_decoy_file(kind, directory)
+
+
+@tool
+def start_canary_listener(port: int = 0) -> str:
+    """Inicia o listener que recebe os callbacks dos arquivos-isca
+    plantados com plant_decoy_file. Sem isso rodando, os arquivos
+    plantados não têm como avisar a Nexus se forem abertos."""
+    return honeytokens.start_canary_listener(port or None)
+
+
+@tool
+def stop_canary_listener() -> str:
+    """Para o listener de callback dos arquivos-isca."""
+    return honeytokens.stop_canary_listener()
+
+
+@tool
+def list_honeytokens_planted() -> str:
+    """Lista todos os honeytokens plantados (arquivos-isca e
+    credenciais-isca) e se algum já disparou."""
+    return honeytokens.describe_honeytokens()
+
+
+@tool
+def check_honeytoken_triggers(token_id: str) -> str:
+    """Mostra os disparos (IP, user-agent, quando) de um honeytoken
+    específico pelo id."""
+    return honeytokens.describe_token_triggers(token_id)
+
+
+@tool
+def plant_pppoe_honeytoken_username() -> str:
+    """Gera um nome de usuário PPPoE-isca pronto para usar com
+    mikrotik_create_pppoe_user (que pede confirmação, como qualquer
+    escrita no Mikrotik). Depois de confirmar a criação real, chame
+    register_pppoe_honeytoken_after_creation com o mesmo username para
+    a Nexus saber que é uma isca."""
+    return honeytokens.generate_decoy_pppoe_username()
+
+
+@tool
+def register_pppoe_honeytoken_after_creation(username: str) -> str:
+    """Registra um usuário PPPoE já criado no Mikrotik como
+    credencial-isca — chame isso DEPOIS de confirmar a criação via
+    mikrotik_create_pppoe_user. Sem isso, check_pppoe_honeytoken_logins
+    não sabe quais usuários são iscas."""
+    return honeytokens.register_pppoe_honeytoken(username)
+
+
+@tool
+def check_pppoe_honeytoken_logins() -> str:
+    """Verifica nas sessões PPPoE ATIVAS reais do Mikrotik se algum
+    usuário-isca está conectado agora — login com credencial-isca é
+    comprometimento confirmado. Consulta dado real do RouterOS."""
+    return honeytokens.check_pppoe_honeytoken_logins()
+
+
+@tool
+def declare_honeynet_segment(cidr: str, description: str) -> str:
+    """Declara um intervalo de IPs (ex: '10.50.0.0/28') como honeynet —
+    um segmento que NUNCA deveria ter tráfego legítimo. Qualquer pacote
+    capturado pelo DPI com origem OU destino nesse intervalo é tratado
+    como ataque confirmado, sem threshold. Limitação real: só cruza com
+    o que o DPI (Suricata) já captura — não há visão total de um
+    segmento sem o Mikrotik espelhar essa VLAN para a interface
+    monitorada."""
+    return honeynet.declare_range(cidr, description)
+
+
+@tool
+def remove_honeynet_segment(cidr: str) -> str:
+    """Remove uma honeynet declarada anteriormente."""
+    return honeynet.undeclare_range(cidr)
+
+
+@tool
+def list_honeynet_segments() -> str:
+    """Lista as honeynets declaradas atualmente."""
+    return honeynet.list_ranges()
+
+
+@tool
+def check_honeynet_violations() -> str:
+    """Verifica se algum alerta de DPI já capturado mostra tráfego
+    tocando uma honeynet declarada — origem alcançando o segmento morto,
+    ou (mais grave ainda) tráfego ORIGINADO de dentro dele."""
+    return honeynet.describe_honeynet_violations()
 
 
 @tool
@@ -1024,6 +1130,18 @@ TOOLS = [
     test_web_injection,
     enumerate_privilege_escalation,
     analyze_suspicious_file,
+    plant_decoy_file,
+    start_canary_listener,
+    stop_canary_listener,
+    list_honeytokens_planted,
+    check_honeytoken_triggers,
+    plant_pppoe_honeytoken_username,
+    register_pppoe_honeytoken_after_creation,
+    check_pppoe_honeytoken_logins,
+    declare_honeynet_segment,
+    remove_honeynet_segment,
+    list_honeynet_segments,
+    check_honeynet_violations,
     list_forensics_plugins,
     run_memory_forensics,
     generate_filesystem_timeline,

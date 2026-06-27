@@ -128,6 +128,14 @@ EXABGP_API_PIPE = os.getenv("EXABGP_API_PIPE", "")
 # Feodo Tracker, Emerging Threats) são atualizados.
 THREAT_FEED_REFRESH_INTERVAL_HOURS = float(os.getenv("THREAT_FEED_REFRESH_INTERVAL_HOURS", "1"))
 
+# Honeytokens: URL base PÚBLICA (alcançável de fora, ex: domínio/IP da
+# Xfiber) usada no callback embutido em arquivos-isca — quando alguém
+# abre o arquivo isca em qualquer lugar do mundo e o link "telefona pra
+# casa", a Nexus precisa estar alcançável nesse endereço. Vazio = a
+# tool avisa que precisa ser configurado antes de plantar arquivos.
+CANARY_BASE_URL = os.getenv("CANARY_BASE_URL", "")
+CANARY_LISTENER_PORT = int(os.getenv("CANARY_LISTENER_PORT", "8090"))
+
 # Engenharia social (pretexting/phishing simulado) é a única capacidade que
 # manipula PESSOAS reais, não infraestrutura — desativada por padrão, exige
 # habilitação deliberada. Mesmo habilitada, a Nexus só GERA conteúdo (texto);

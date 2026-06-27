@@ -142,6 +142,33 @@ CREATE TABLE IF NOT EXISTS threat_feed_entries (
 
 CREATE INDEX IF NOT EXISTS idx_threat_feed_entries_source ON threat_feed_entries(source);
 
+CREATE TABLE IF NOT EXISTS honeytokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    location TEXT NOT NULL,
+    planted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    triggered_count INTEGER NOT NULL DEFAULT 0,
+    last_triggered_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS honeytoken_triggers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_id TEXT NOT NULL,
+    source_ip TEXT,
+    user_agent TEXT,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_honeytoken_triggers_token ON honeytoken_triggers(token_id);
+
+CREATE TABLE IF NOT EXISTS honeynet_ranges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cidr TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    declared_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tool_name TEXT NOT NULL,
@@ -767,3 +794,75 @@ def get_honeypot_hits_chronological_for_ip(ip: str) -> list[tuple[int, str, str]
             "SELECT port, service, timestamp FROM honeypot_hits WHERE ip = ? ORDER BY id ASC",
             (ip,),
         ).fetchall()
+
+
+def plant_honeytoken(token_id: str, kind: str, location: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO honeytokens (token_id, kind, location) VALUES (?, ?, ?)",
+            (token_id, kind, location),
+        )
+
+
+def record_honeytoken_trigger(token_id: str, source_ip: str | None, user_agent: str | None) -> bool:
+    """Registra um disparo de honeytoken. Retorna False se o token_id não
+    existe (chamada espúria, ex: alguém adivinhando URLs), True se
+    disparou de verdade."""
+    with get_conn() as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM honeytokens WHERE token_id = ?", (token_id,)
+        ).fetchone()
+        if not exists:
+            return False
+        conn.execute(
+            "INSERT INTO honeytoken_triggers (token_id, source_ip, user_agent) VALUES (?, ?, ?)",
+            (token_id, source_ip, user_agent),
+        )
+        conn.execute(
+            "UPDATE honeytokens SET triggered_count = triggered_count + 1, "
+            "last_triggered_at = datetime('now') WHERE token_id = ?",
+            (token_id,),
+        )
+        return True
+
+
+def list_honeytokens():
+    """Retorna (token_id, kind, location, planted_at, triggered_count, last_triggered_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT token_id, kind, location, planted_at, triggered_count, last_triggered_at "
+            "FROM honeytokens ORDER BY planted_at DESC"
+        ).fetchall()
+
+
+def get_honeytoken_triggers(token_id: str):
+    """Retorna (source_ip, user_agent, timestamp) de todos os disparos de um token."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT source_ip, user_agent, timestamp FROM honeytoken_triggers "
+            "WHERE token_id = ? ORDER BY id DESC",
+            (token_id,),
+        ).fetchall()
+
+
+def declare_honeynet_range(cidr: str, description: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO honeynet_ranges (cidr, description) VALUES (?, ?) "
+            "ON CONFLICT(cidr) DO UPDATE SET description = excluded.description",
+            (cidr, description),
+        )
+
+
+def list_honeynet_ranges():
+    """Retorna (cidr, description, declared_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT cidr, description, declared_at FROM honeynet_ranges ORDER BY declared_at"
+        ).fetchall()
+
+
+def remove_honeynet_range(cidr: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM honeynet_ranges WHERE cidr = ?", (cidr,))
+        return cur.rowcount > 0

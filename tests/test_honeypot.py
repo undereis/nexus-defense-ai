@@ -58,7 +58,7 @@ def test_starting_twice_is_idempotent(honeypot_module):
 
 def test_rejects_unsupported_service(honeypot_module):
     honeypot, _ = honeypot_module
-    result = honeypot.start("telnet", 12345)
+    result = honeypot.start("postgresql", 12345)
     assert "não suportado" in result
 
 
@@ -272,3 +272,131 @@ def test_start_reports_real_failure_when_port_already_in_use(honeypot_module):
         assert port not in [p for _, p in honeypot.list_running()]
     finally:
         blocker.close()
+
+
+def test_telnet_captures_credentials(honeypot_module):
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("telnet", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    client.recv(256)  # banner + "login: "
+    client.sendall(b"admin\r\n")
+    client.recv(256)  # "Password: "
+    client.sendall(b"senha123\r\n")
+    final = client.recv(256)
+    client.close()
+    time.sleep(0.3)
+
+    assert b"Login incorrect" in final
+    creds = dbmod.list_honeypot_credentials()
+    assert len(creds) == 1
+    ip, captured_port, service, username, password, _ts = creds[0]
+    assert service == "telnet"
+    assert username == "admin"
+    assert password == "senha123"
+
+
+def test_mysql_handshake_and_username_capture(honeypot_module):
+    import struct
+
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("mysql", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    handshake = client.recv(200)
+    # Protocolo v10 real: primeiro byte do payload (após o header de 4
+    # bytes) deve ser 0x0a, e o nome do plugin de auth deve aparecer.
+    assert handshake[4] == 0x0A
+    assert b"mysql_native_password" in handshake
+
+    username = b"root\x00"
+    caps = struct.pack("<I", 0x000FA68D)
+    max_pkt = struct.pack("<I", 16777216)
+    charset = b"\x21"
+    reserved = b"\x00" * 23
+    auth_response_len = b"\x00"
+    payload = caps + max_pkt + charset + reserved + username + auth_response_len
+    header = struct.pack("<I", len(payload))[:3] + b"\x01"
+    client.sendall(header + payload)
+    time.sleep(0.2)
+    response = client.recv(200)
+    client.close()
+    time.sleep(0.3)
+
+    assert response[4] == 0xFF  # ERR packet marker
+    creds = dbmod.list_honeypot_credentials()
+    assert len(creds) == 1
+    assert creds[0][2] == "mysql"
+    assert creds[0][3] == "root"
+
+
+def test_elasticsearch_responds_and_captures_any_request(honeypot_module):
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("elasticsearch", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    client.sendall(b"GET /_cat/indices HTTP/1.1\r\nHost: x\r\n\r\n")
+    time.sleep(0.2)
+    response = client.recv(500)
+    client.close()
+    time.sleep(0.3)
+
+    assert b"xfiber-cluster" in response
+    assert b"You Know, for Search" in response
+    creds = dbmod.list_honeypot_credentials()
+    assert len(creds) == 1
+    assert creds[0][2] == "elasticsearch"
+    assert "_cat/indices" in creds[0][3]
+
+
+def test_rdp_completes_handshake_and_extracts_mstshash(honeypot_module):
+    import struct
+
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("rdp", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    x224_cr = b"\xe0\x00\x00\x00\x00\x00Cookie: mstshash=adminuser\r\n\x01\x00\x08\x00\x00\x00\x00\x00"
+    tpkt = b"\x03\x00" + struct.pack(">H", len(x224_cr) + 4)
+    client.sendall(tpkt + x224_cr)
+    time.sleep(0.2)
+    response = client.recv(200)
+    client.close()
+    time.sleep(0.3)
+
+    assert response[:2] == b"\x03\x00"  # TPKT header real
+    assert response[4] == 0xD0  # X.224 Connection Confirm
+    creds = dbmod.list_honeypot_credentials()
+    assert len(creds) == 1
+    assert creds[0][2] == "rdp"
+    assert creds[0][3] == "adminuser"
+
+
+def test_rdp_without_mstshash_completes_handshake_without_capturing(honeypot_module):
+    import struct
+
+    honeypot, dbmod = honeypot_module
+    port = _free_port()
+    honeypot.start("rdp", port)
+    time.sleep(0.2)
+
+    client = socket.create_connection(("127.0.0.1", port), timeout=2)
+    x224_cr = b"\xe0\x00\x00\x00\x00\x00\x01\x00\x08\x00\x00\x00\x00\x00"
+    tpkt = b"\x03\x00" + struct.pack(">H", len(x224_cr) + 4)
+    client.sendall(tpkt + x224_cr)
+    time.sleep(0.2)
+    response = client.recv(200)
+    client.close()
+    time.sleep(0.3)
+
+    assert response[:2] == b"\x03\x00"
+    assert dbmod.list_honeypot_credentials() == []
+    assert len(dbmod.list_honeypot_hits()) == 1  # ainda registra o hit, só não credencial
