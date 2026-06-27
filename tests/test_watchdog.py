@@ -66,7 +66,7 @@ def test_check_and_heal_does_nothing_when_all_running(watchdog_module, monkeypat
     monkeypatch.setattr(watchdog_module.honeypot, "list_running", lambda: [("ssh", 2222), ("ftp", 2121)])
 
     started = []
-    monkeypatch.setattr(watchdog_module.honeypot, "start", lambda s, p: started.append((s, p)))
+    monkeypatch.setattr(watchdog_module.honeypot, "start", lambda s, p: started.append((s, p)) or f"{s} iniciado na porta {p}")
 
     healed = watchdog_module.check_and_heal()
     assert healed == []
@@ -79,7 +79,7 @@ def test_check_and_heal_only_restarts_the_missing_one(watchdog_module, monkeypat
     monkeypatch.setattr(watchdog_module.honeypot, "list_running", lambda: [("ssh", 2222)])
 
     started = []
-    monkeypatch.setattr(watchdog_module.honeypot, "start", lambda s, p: started.append((s, p)))
+    monkeypatch.setattr(watchdog_module.honeypot, "start", lambda s, p: started.append((s, p)) or f"{s} iniciado na porta {p}")
     monkeypatch.setattr(watchdog_module.notify, "send_notification", lambda *a, **k: True)
 
     healed = watchdog_module.check_and_heal()
@@ -99,7 +99,7 @@ def test_check_and_heal_respects_manually_stopped_service(watchdog_module, monke
     )
 
     started = []
-    monkeypatch.setattr(watchdog_module.honeypot, "start", lambda s, p: started.append((s, p)))
+    monkeypatch.setattr(watchdog_module.honeypot, "start", lambda s, p: started.append((s, p)) or f"{s} iniciado na porta {p}")
     monkeypatch.setattr(watchdog_module.notify, "send_notification", lambda *a, **k: True)
 
     healed = watchdog_module.check_and_heal()

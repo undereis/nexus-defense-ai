@@ -253,3 +253,22 @@ def test_start_again_clears_manually_stopped_flag(honeypot_module):
 
     honeypot.start("ssh", port)
     assert honeypot.is_manually_stopped("ssh", port) is False
+
+
+def test_start_reports_real_failure_when_port_already_in_use(honeypot_module):
+    """Regressão do bug real: porta já ocupada por outro processo fazia
+    start() reportar sucesso mesmo com o bind falhando em background, e
+    o watchdog ficava tentando 'curar' isso para sempre sem nunca
+    conseguir de fato. Agora start() espera a confirmação real do bind."""
+    honeypot, _ = honeypot_module
+    port = _free_port()
+
+    blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    blocker.bind(("0.0.0.0", port))
+    blocker.listen(1)
+    try:
+        result = honeypot.start("ssh", port)
+        assert "Falha ao iniciar" in result
+        assert port not in [p for _, p in honeypot.list_running()]
+    finally:
+        blocker.close()
