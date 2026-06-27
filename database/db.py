@@ -133,6 +133,15 @@ CREATE TABLE IF NOT EXISTS bgp_flowspec_rules (
     withdrawn_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS threat_feed_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    value TEXT NOT NULL,
+    fetched_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_threat_feed_entries_source ON threat_feed_entries(source);
+
 CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tool_name TEXT NOT NULL,
@@ -689,4 +698,50 @@ def list_active_flowspec_rules():
         return conn.execute(
             "SELECT id, description, created_at FROM bgp_flowspec_rules "
             "WHERE status = 'announced' ORDER BY created_at"
+        ).fetchall()
+
+
+def get_event_types_for_ip(ip: str) -> list[str]:
+    """Retorna os tipos de evento distintos já registrados para um IP
+    específico — base para o mapeamento MITRE ATT&CK no dossiê."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT event_type FROM events WHERE source_ip = ?", (ip,)
+        ).fetchall()
+        return [r[0] for r in rows]
+
+
+def get_honeypot_services_for_ip(ip: str) -> list[str]:
+    """Retorna os serviços de honeypot distintos (ssh/ftp/http) que um IP
+    já tocou."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT service FROM honeypot_hits WHERE ip = ?", (ip,)
+        ).fetchall()
+        return [r[0] for r in rows]
+
+
+def replace_feed_entries(source: str, entries: list[str]):
+    """Substitui todas as entradas de uma fonte de threat feed pelas
+    novas (o feed de origem já manda a lista completa atual a cada
+    consulta, não incremental)."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM threat_feed_entries WHERE source = ?", (source,))
+        conn.executemany(
+            "INSERT INTO threat_feed_entries (source, value) VALUES (?, ?)",
+            [(source, e) for e in entries],
+        )
+
+
+def get_all_feed_entries() -> list[tuple[str, str]]:
+    """Retorna (source, value) de todas as entradas de todos os feeds."""
+    with get_conn() as conn:
+        return conn.execute("SELECT source, value FROM threat_feed_entries").fetchall()
+
+
+def count_feed_entries_by_source() -> list[tuple[str, int, str]]:
+    """Retorna (source, total, fetched_at mais recente) por fonte."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT source, COUNT(*), MAX(fetched_at) FROM threat_feed_entries GROUP BY source"
         ).fetchall()

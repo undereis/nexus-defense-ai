@@ -25,6 +25,7 @@ from config import (
     RECONCILE_POLL_INTERVAL,
     REPORT_INTERVAL_HOURS,
     RISK_SWEEP_INTERVAL,
+    THREAT_FEED_REFRESH_INTERVAL_HOURS,
     WATCHDOG_INTERVAL,
 )
 from database.db import (
@@ -43,10 +44,12 @@ from tools.proactive import check_asset, get_due_assets
 from tools.reconcile import check_and_reconcile, describe
 from tools.report import generate_summary_report
 from tools.risk import sweep_expired
+from tools.threat_feed_lists import check_ip_against_feeds, refresh_all_feeds
 from tools.threat_intel import is_repeat_offender
 from tools.watchdog import check_and_heal
 
 _last_alerted: dict[str, float] = {}
+_feed_blocked_ips: set[str] = set()
 
 
 def _announce(message: str) -> None:
@@ -70,6 +73,25 @@ def monitor_loop(stop_event: threading.Event):
             now = time.time()
             counts = _detector.snapshot_counts()
             record_current_sample(sum(counts.values()), len(counts))
+
+            # Bloqueio proativo: qualquer IP ativo que já está numa lista
+            # global de ameaça conhecida (Spamhaus/Feodo/ET) é isolado na
+            # hora, sem esperar threshold de volume — o "quem já é
+            # malicioso em qualquer lugar" não precisa atacar a Xfiber
+            # primeiro pra ser bloqueado aqui.
+            for ip in counts:
+                if ip in _feed_blocked_ips:
+                    continue
+                feed_matches = check_ip_against_feeds(ip)
+                if feed_matches:
+                    reason = f"IP em feed(s) de threat intel conhecido: {', '.join(feed_matches)}"
+                    log_event("threat_feed_match", ip, reason)
+                    result = firewall.block_ip(ip, reason)
+                    record_threat_isolation(ip)
+                    _feed_blocked_ips.add(ip)
+                    _announce(f"BLOQUEIO PROATIVO (threat feed): {result} ({reason})")
+                    send_notification("Nexus: IP isolado proativamente (threat feed)", f"{ip} — {reason}\n{result}")
+
             severe, moderate = classify_threats(
                 counts, _detector.threshold, AUTO_ISOLATE_MULTIPLIER
             )
@@ -197,6 +219,16 @@ def watchdog_loop(stop_event: threading.Event):
         stop_event.wait(WATCHDOG_INTERVAL)
 
 
+def threat_feed_refresh_loop(stop_event: threading.Event):
+    while not stop_event.is_set():
+        try:
+            result = refresh_all_feeds()
+            log_event("threat_feed_refresh", None, result, action_taken="atualizado")
+        except Exception as exc:
+            log_event("threat_feed_refresh_error", None, str(exc))
+        stop_event.wait(THREAT_FEED_REFRESH_INTERVAL_HOURS * 3600)
+
+
 def risk_sweep_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
@@ -258,6 +290,8 @@ def main():
     report_thread.start()
     risk_sweep_thread = threading.Thread(target=risk_sweep_loop, args=(stop_event,), daemon=True)
     risk_sweep_thread.start()
+    threat_feed_thread = threading.Thread(target=threat_feed_refresh_loop, args=(stop_event,), daemon=True)
+    threat_feed_thread.start()
 
     try:
         while True:
