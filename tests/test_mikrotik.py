@@ -69,7 +69,7 @@ def test_connection_failure_reports_error(mikrotik_module, monkeypatch):
 
     monkeypatch.setattr(mikrotik, "_connect", raise_error)
     result = mikrotik.test_connection()
-    assert "Falha ao conectar" in result
+    assert "Falha ao comunicar com o Mikrotik" in result
 
 
 def test_get_system_resources(mikrotik_module, monkeypatch):
@@ -179,3 +179,63 @@ def test_run_generic_command_is_audited(mikrotik_module, monkeypatch):
     types = [e[2] for e in events]
     assert "mikrotik_generic_command" in types
     assert "mikrotik_generic_command_confirmed" in types
+
+
+def test_get_system_resources_returns_clean_error_when_connection_fails(mikrotik_module, monkeypatch):
+    mikrotik, _ = mikrotik_module
+
+    def raise_timeout():
+        raise TimeoutError("recv timed out")
+
+    monkeypatch.setattr(mikrotik, "_connect", raise_timeout)
+
+    result = mikrotik.get_system_resources()
+
+    assert "Falha ao comunicar com o Mikrotik" in result
+    assert "192.168.88.1:8728" in result
+
+
+def test_list_interfaces_returns_clean_error_instead_of_raising(mikrotik_module, monkeypatch):
+    """Regressão: antes da correção, só test_connection() tratava erro —
+    as outras 9 funções deixavam a exceção crua subir e quebrar a tool."""
+    mikrotik, _ = mikrotik_module
+
+    def raise_connection_refused():
+        raise ConnectionRefusedError("Connection refused")
+
+    monkeypatch.setattr(mikrotik, "_connect", raise_connection_refused)
+
+    result = mikrotik.list_interfaces()  # não deve levantar exceção
+
+    assert isinstance(result, str)
+    assert "Falha ao comunicar com o Mikrotik" in result
+
+
+def test_connect_passes_configured_timeout_to_librouteros(mikrotik_module, monkeypatch):
+    mikrotik, _ = mikrotik_module
+    import config
+    monkeypatch.setattr(config, "MIKROTIK_TIMEOUT_SECONDS", 3)
+    monkeypatch.setattr(mikrotik, "MIKROTIK_TIMEOUT_SECONDS", 3)
+
+    captured = {}
+
+    def fake_librouteros_connect(**kwargs):
+        captured.update(kwargs)
+        return FakeApi({})
+
+    monkeypatch.setattr(mikrotik.librouteros, "connect", fake_librouteros_connect)
+
+    mikrotik._connect()
+
+    assert captured["timeout"] == 3
+
+
+def test_safe_decorator_reports_not_configured_without_raising(mikrotik_module, monkeypatch):
+    mikrotik, _ = mikrotik_module
+    import config
+    monkeypatch.setattr(config, "MIKROTIK_HOST", "")
+    monkeypatch.setattr(mikrotik, "MIKROTIK_HOST", "")
+
+    result = mikrotik.list_interfaces()
+
+    assert "não configurado" in result
