@@ -42,6 +42,7 @@ from tools import (
     watchdog,
     web_injection,
 )
+from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
 
@@ -119,6 +120,25 @@ def check_ip_location(ip: str) -> str:
     """Consulta geolocalização e ASN/provedor de um IP (país, cidade, ISP)
     via API pública gratuita. IPs privados/locais não têm geolocalização."""
     return geoip.describe_location(ip)
+
+
+@tool
+def whois_lookup(target: str) -> str:
+    """Consulta whois real de um domínio ou IP (quem registrou, data de
+    criação, nameservers, bloco CIDR/organização responsável). Usa o
+    binário whois do sistema, sem limite de uso conhecido para consultas
+    pontuais. Diferente de check_ip_location: aqui é registro oficial,
+    não geolocalização por IP."""
+    return whois_module.whois_query(target)
+
+
+@tool
+def lookup_asn(asn: str) -> str:
+    """Consulta quem é o dono de um ASN (Sistema Autônomo) e quais
+    prefixos de IP ele anuncia hoje na internet (ex: 'AS15169' ou
+    '15169' é o Google). Use para investigar de qual organização/rede
+    vem o tráfego de um IP suspeito, além da geolocalização."""
+    return whois_module.asn_lookup(asn)
 
 
 @tool
@@ -717,6 +737,8 @@ TOOLS = [
     correlate_threat,
     list_known_attackers,
     check_ip_location,
+    whois_lookup,
+    lookup_asn,
     generate_attacker_dossier,
     check_watchdog_health,
     generate_summary_report,
