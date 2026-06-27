@@ -43,6 +43,7 @@ from tools.policy import classify_threats
 from tools.proactive import check_asset, get_due_assets
 from tools.reconcile import check_and_reconcile, describe
 from tools.report import generate_summary_report
+from tools.ioc_correlation import correlate_and_escalate
 from tools.risk import sweep_expired
 from tools.threat_feed_lists import check_ip_against_feeds, refresh_all_feeds
 from tools.threat_intel import is_repeat_offender
@@ -96,8 +97,19 @@ def monitor_loop(stop_event: threading.Event):
                 counts, _detector.threshold, AUTO_ISOLATE_MULTIPLIER
             )
 
+            # Correlação de IOC: qualquer IP moderado que já mostrou sinal
+            # de reconhecimento (honeypot ou DPI categorizado como
+            # varredura) é escalado ANTES de decidir severo/moderado —
+            # "quem varreu hoje, tratado com prioridade máxima hoje",
+            # sem esperar um segundo padrão de ataque se repetir.
+            for ip in moderate:
+                escalation_note = correlate_and_escalate(ip)
+                if escalation_note:
+                    log_event("ioc_correlation_triggered", ip, escalation_note, action_taken="escalado")
+
             # Memória institucional: um IP moderado que já é reincidente
-            # conhecido (atacou/foi isolado antes) não precisa repetir todo
+            # conhecido (atacou/foi isolado antes, OU acabou de ser
+            # escalado por sinal de recon acima) não precisa repetir todo
             # o processo de novo — escala direto para o caminho rápido.
             escalated = [ip for ip in moderate if is_repeat_offender(ip)]
             if escalated:

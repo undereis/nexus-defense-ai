@@ -99,11 +99,18 @@ def _read_eve_json_lines() -> list[dict]:
     return entries
 
 
+def get_alert_entries() -> list[dict]:
+    """Retorna os alertas brutos (dict do eve.json, não formatados em
+    texto) — usado por outros módulos (ex: ioc_correlation.py) que
+    precisam processar o conteúdo, não só exibir."""
+    return [e for e in _read_eve_json_lines() if e.get("event_type") == "alert"]
+
+
 def list_alerts(limit: int = 20) -> str:
     """Lista os alertas mais recentes detectados pelo Suricata (assinatura,
     categoria, severidade, IPs envolvidos) — o que de fato estava DENTRO
     do tráfego, não só o volume."""
-    entries = [e for e in _read_eve_json_lines() if e.get("event_type") == "alert"]
+    entries = get_alert_entries()
     if not entries:
         return "Nenhum alerta de DPI registrado ainda (ou Suricata nunca rodou)."
     entries = entries[-limit:]
@@ -121,7 +128,7 @@ def list_alerts(limit: int = 20) -> str:
 def describe_alert_summary() -> str:
     """Agrega todos os alertas já registrados por assinatura, para ter
     uma visão geral do que mais aparece, em vez de ler alerta por alerta."""
-    entries = [e for e in _read_eve_json_lines() if e.get("event_type") == "alert"]
+    entries = get_alert_entries()
     if not entries:
         return "Nenhum alerta de DPI registrado ainda (ou Suricata nunca rodou)."
     counts: dict[str, int] = {}
