@@ -55,6 +55,11 @@ ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
 VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
 SHODAN_API_KEY = os.getenv("SHODAN_API_KEY", "")
 
+# Reporta automaticamente ao AbuseIPDB todo IP que a Nexus confirma
+# isolar (contamina a reputação global do atacante, sem precisar pedir).
+# Só tem efeito se ABUSEIPDB_API_KEY estiver configurada.
+AUTO_REPORT_ABUSEIPDB = os.getenv("AUTO_REPORT_ABUSEIPDB", "true").lower() == "true"
+
 # Bot User OAuth Token (xoxb-...) + canal de destino, para postar notificações
 # direto via Slack Web API (chat.postMessage) em vez de um webhook genérico.
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")

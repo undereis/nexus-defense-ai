@@ -35,7 +35,7 @@ from database.db import (
     record_honeypot_hit,
 )
 from tools import firewall, notify
-from tools.threat_intel import record_threat_isolation
+from tools.threat_intel import record_confirmed_isolation
 
 SUPPORTED_SERVICES = {"ssh", "ftp", "http"}
 
@@ -67,7 +67,7 @@ def _isolate(ip: str, port: int, service: str):
         return
     reason = f"Honeypot ({service}): conectou na porta-armadilha {port} (evidência direta de varredura)"
     result = firewall.block_ip(ip, reason)
-    record_threat_isolation(ip)
+    record_confirmed_isolation(ip, reason)
     notify.send_notification(
         "Nexus: honeypot capturou um atacante",
         f"IP {ip} conectou no honeypot {service} na porta {port}.\n{result}",

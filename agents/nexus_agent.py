@@ -14,7 +14,6 @@ from database.db import (
     get_findings_for_host,
     list_scanned_hosts,
     record_finding,
-    record_threat_isolation,
 )
 from tools import (
     access,
@@ -113,7 +112,7 @@ def isolate_ip(ip: str, reason: str = "Ataque detectado") -> str:
     cortando toda comunicação com ele. Use quando confirmar um ataque ou
     comportamento malicioso vindo desse IP."""
     result = firewall.block_ip(ip, reason)
-    record_threat_isolation(ip)
+    threat_intel.record_confirmed_isolation(ip, reason)
     return result
 
 
@@ -213,6 +212,18 @@ def check_ip_against_threat_feed_lists(ip: str) -> str:
     check_external_threat_feeds (que consulta a API sob demanda), isto
     usa os dados já baixados localmente, então é instantâneo."""
     return threat_feed_lists.describe_ip_feed_check(ip)
+
+
+@tool
+def report_ip_to_abuseipdb(ip: str, reason: str) -> str:
+    """Reporta manualmente um IP ao AbuseIPDB, contaminando a reputação
+    GLOBAL dele (visível por qualquer rede que consulte esse IP depois).
+    Normalmente isso já acontece automaticamente quando isolate_ip
+    confirma um isolamento — use esta tool só se quiser reportar algo
+    que não passou pelo isolamento automático."""
+    categories = threat_feeds.categorize_isolation_reason(reason)
+    comment = f"Reportado manualmente via Nexus Defense AI (Xfiber). Motivo: {reason}."
+    return threat_feeds.report_to_abuseipdb(ip, categories, comment)
 
 
 @tool
@@ -967,6 +978,7 @@ TOOLS = [
     check_external_threat_feeds,
     refresh_threat_feed_lists,
     check_ip_against_threat_feed_lists,
+    report_ip_to_abuseipdb,
     check_ioc_recon_signal,
     list_ioc_recon_watchlist,
     find_similar_attacker_fingerprints,

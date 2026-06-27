@@ -33,7 +33,6 @@ from database.db import (
     init_db,
     log_event,
     record_threat_flag,
-    record_threat_isolation,
 )
 from tools import firewall, honeypot
 from tools.anomaly import record_current_sample
@@ -46,7 +45,7 @@ from tools.report import generate_summary_report
 from tools.ioc_correlation import correlate_and_escalate
 from tools.risk import sweep_expired
 from tools.threat_feed_lists import check_ip_against_feeds, refresh_all_feeds
-from tools.threat_intel import is_repeat_offender
+from tools.threat_intel import is_repeat_offender, record_confirmed_isolation
 from tools.watchdog import check_and_heal
 
 _last_alerted: dict[str, float] = {}
@@ -88,7 +87,7 @@ def monitor_loop(stop_event: threading.Event):
                     reason = f"IP em feed(s) de threat intel conhecido: {', '.join(feed_matches)}"
                     log_event("threat_feed_match", ip, reason)
                     result = firewall.block_ip(ip, reason)
-                    record_threat_isolation(ip)
+                    record_confirmed_isolation(ip, reason)
                     _feed_blocked_ips.add(ip)
                     _announce(f"BLOQUEIO PROATIVO (threat feed): {result} ({reason})")
                     send_notification("Nexus: IP isolado proativamente (threat feed)", f"{ip} — {reason}\n{result}")
@@ -132,7 +131,7 @@ def monitor_loop(stop_event: threading.Event):
                 log_event("ddos_severe", ip, reason)
                 record_threat_flag(ip)
                 result = firewall.block_ip(ip, reason)
-                record_threat_isolation(ip)
+                record_confirmed_isolation(ip, reason)
                 _announce(f"AÇÃO AUTOMÁTICA: {result} ({reason})")
                 send_notification("Nexus: IP isolado automaticamente", f"{ip} — {reason}\n{result}")
 
