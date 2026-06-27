@@ -157,3 +157,9 @@ MIKROTIK_USER = os.getenv("MIKROTIK_USER", "")
 MIKROTIK_PASSWORD = os.getenv("MIKROTIK_PASSWORD", "")
 MIKROTIK_PORT = int(os.getenv("MIKROTIK_PORT", "8728"))
 MIKROTIK_USE_TLS = os.getenv("MIKROTIK_USE_TLS", "false").lower() == "true"
+
+# Timeout de conexão/comando com o Mikrotik. Sem isso, um roteador
+# inacessível (cabo desconectado, firewall dropando pacote em vez de
+# rejeitar) pode travar a thread chamando a tool por minutos, em vez de
+# falhar rápido com uma mensagem clara.
+MIKROTIK_TIMEOUT_SECONDS = int(os.getenv("MIKROTIK_TIMEOUT_SECONDS", "10"))

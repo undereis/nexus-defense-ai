@@ -11,6 +11,7 @@ Porta 8729 (TLS) é obrigatória para qualquer acesso fora da rede local —
 a porta 8728 manda usuário/senha em texto puro.
 """
 
+import functools
 import ssl
 
 import librouteros
@@ -19,6 +20,7 @@ from config import (
     MIKROTIK_HOST,
     MIKROTIK_PASSWORD,
     MIKROTIK_PORT,
+    MIKROTIK_TIMEOUT_SECONDS,
     MIKROTIK_USE_TLS,
     MIKROTIK_USER,
 )
@@ -41,7 +43,10 @@ def _connect():
             "Mikrotik não configurado. Defina MIKROTIK_HOST, MIKROTIK_USER e "
             "MIKROTIK_PASSWORD no .env."
         )
-    kwargs = {"host": MIKROTIK_HOST, "username": MIKROTIK_USER, "password": MIKROTIK_PASSWORD, "port": MIKROTIK_PORT}
+    kwargs = {
+        "host": MIKROTIK_HOST, "username": MIKROTIK_USER, "password": MIKROTIK_PASSWORD,
+        "port": MIKROTIK_PORT, "timeout": MIKROTIK_TIMEOUT_SECONDS,
+    }
     if MIKROTIK_USE_TLS:
         kwargs["ssl_wrapper"] = _ssl_wrapper
     return librouteros.connect(**kwargs)
@@ -51,20 +56,38 @@ def _is_configured() -> bool:
     return bool(MIKROTIK_HOST and MIKROTIK_USER)
 
 
-def test_connection() -> str:
-    if not _is_configured():
-        return "Mikrotik não configurado. Defina MIKROTIK_HOST/MIKROTIK_USER/MIKROTIK_PASSWORD no .env."
-    try:
-        api = _connect()
+def _safe(func):
+    """Converte qualquer falha de conexão/comando (timeout, roteador
+    inacessível, credencial errada) numa mensagem de erro limpa, em vez de
+    deixar a exceção crua do socket/librouteros propagar e travar a
+    chamada da tool no meio do agente. Antes desta correção, só
+    test_connection() tinha esse tratamento — as outras 9 funções públicas
+    deixavam a exceção subir sem rede de segurança."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        if not _is_configured():
+            return "Mikrotik não configurado. Defina MIKROTIK_HOST/MIKROTIK_USER/MIKROTIK_PASSWORD no .env."
         try:
-            identity = list(api(cmd="/system/identity/print"))
-            return f"Conexão OK com {MIKROTIK_HOST}:{MIKROTIK_PORT} — identidade: {identity[0].get('name', '?')}"
-        finally:
-            api.close()
-    except Exception as exc:
-        return f"Falha ao conectar no Mikrotik: {exc}"
+            return func(*args, **kwargs)
+        except Exception as exc:
+            return (
+                f"Falha ao comunicar com o Mikrotik ({MIKROTIK_HOST}:{MIKROTIK_PORT}, "
+                f"timeout={MIKROTIK_TIMEOUT_SECONDS}s): {exc}"
+            )
+    return wrapper
 
 
+@_safe
+def test_connection() -> str:
+    api = _connect()
+    try:
+        identity = list(api(cmd="/system/identity/print"))
+        return f"Conexão OK com {MIKROTIK_HOST}:{MIKROTIK_PORT} — identidade: {identity[0].get('name', '?')}"
+    finally:
+        api.close()
+
+
+@_safe
 def get_system_resources() -> str:
     api = _connect()
     try:
@@ -83,6 +106,7 @@ def get_system_resources() -> str:
     )
 
 
+@_safe
 def list_interfaces() -> str:
     api = _connect()
     try:
@@ -98,6 +122,7 @@ def list_interfaces() -> str:
     return "\n".join(lines)
 
 
+@_safe
 def list_firewall_rules(chain: str = "") -> str:
     api = _connect()
     try:
@@ -118,6 +143,7 @@ def list_firewall_rules(chain: str = "") -> str:
     return "\n".join(lines)
 
 
+@_safe
 def add_firewall_rule(chain: str, action: str, src_address: str = "", dst_address: str = "", protocol: str = "", comment: str = "") -> str:
     if chain not in _ALLOWED_CHAINS:
         return f"chain inválida: {chain}. Use: {', '.join(sorted(_ALLOWED_CHAINS))}"
@@ -144,6 +170,7 @@ def add_firewall_rule(chain: str, action: str, src_address: str = "", dst_addres
     return f"Regra adicionada: chain={chain} action={action}" + (f" src={src_address}" if src_address else "")
 
 
+@_safe
 def remove_firewall_rule(rule_id: str) -> str:
     log_event("mikrotik_firewall_remove", None, f"rule_id={rule_id}", action_taken="executando")
     api = _connect()
@@ -155,6 +182,7 @@ def remove_firewall_rule(rule_id: str) -> str:
     return f"Regra {rule_id} removida."
 
 
+@_safe
 def list_pppoe_users() -> str:
     api = _connect()
     try:
@@ -169,6 +197,7 @@ def list_pppoe_users() -> str:
     return "\n".join(lines)
 
 
+@_safe
 def create_pppoe_user(username: str, password: str, profile: str = "default") -> str:
     log_event("mikrotik_pppoe_create", None, f"username={username} profile={profile}", action_taken="executando")
     api = _connect()
@@ -180,6 +209,7 @@ def create_pppoe_user(username: str, password: str, profile: str = "default") ->
     return f"Usuário PPPoE '{username}' criado com perfil '{profile}'."
 
 
+@_safe
 def remove_pppoe_user(username: str) -> str:
     api = _connect()
     try:
@@ -195,6 +225,7 @@ def remove_pppoe_user(username: str) -> str:
     return f"Usuário PPPoE '{username}' removido."
 
 
+@_safe
 def list_dhcp_leases() -> str:
     api = _connect()
     try:
@@ -209,6 +240,7 @@ def list_dhcp_leases() -> str:
     return "\n".join(lines)
 
 
+@_safe
 def run_generic_command(path: str, params: dict | None = None) -> str:
     """Roda qualquer comando RouterOS no formato de menu (ex:
     '/ip/address/print', '/interface/wireless/print'). Fallback para
