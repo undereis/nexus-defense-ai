@@ -25,6 +25,7 @@ from tools import (
     dpi,
     forensics,
     exploit,
+    fingerprint,
     firewall,
     geoip,
     honeypot,
@@ -211,6 +212,16 @@ def check_ip_against_threat_feed_lists(ip: str) -> str:
     check_external_threat_feeds (que consulta a API sob demanda), isto
     usa os dados já baixados localmente, então é instantâneo."""
     return threat_feed_lists.describe_ip_feed_check(ip)
+
+
+@tool
+def find_similar_attacker_fingerprints(ip: str, hours: float = 168) -> str:
+    """Compara a sequência de portas/timing de conexões em honeypot de
+    um IP contra outros IPs ativos no período, para detectar se é o
+    MESMO atacante usando IPs diferentes (proxy, botnet, IP dinâmico).
+    Precisa de pelo menos 3 conexões do IP em honeypot pra ser
+    confiável — com poucos dados, qualquer correspondência é coincidência."""
+    return fingerprint.describe_similar_attackers(ip, hours)
 
 
 @tool
@@ -937,6 +948,7 @@ TOOLS = [
     check_external_threat_feeds,
     refresh_threat_feed_lists,
     check_ip_against_threat_feed_lists,
+    find_similar_attacker_fingerprints,
     describe_threat_feed_status,
     check_file_hash_reputation,
     check_watchdog_health,

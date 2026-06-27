@@ -14,7 +14,7 @@ from database.db import (
     list_honeypot_credentials_for_ip,
     list_honeypot_hits_for_ip,
 )
-from tools import geoip, mitre_attack
+from tools import fingerprint, geoip, mitre_attack
 from tools.threat_intel import reputation_score
 
 
@@ -88,6 +88,11 @@ def build_dossier(ip: str) -> str:
     event_types = get_event_types_for_ip(ip)
     honeypot_services = get_honeypot_services_for_ip(ip)
     sections.append("🗺️ " + mitre_attack.summarize_ttps_for_ip(event_types, honeypot_services))
+    sections.append("")
+
+    # Fingerprint comportamental: outros IPs com o mesmo padrão de
+    # portas/timing — possível mesmo atacante, IP diferente.
+    sections.append("🫆 " + fingerprint.describe_similar_attackers(ip))
     sections.append("")
 
     sections.append("⚖️ Veredito:")
