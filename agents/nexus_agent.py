@@ -30,6 +30,7 @@ from tools import (
     geoip,
     honeypot,
     hydra,
+    ioc_correlation,
     knowledge_base,
     malware_analysis,
     metrics,
@@ -212,6 +213,24 @@ def check_ip_against_threat_feed_lists(ip: str) -> str:
     check_external_threat_feeds (que consulta a API sob demanda), isto
     usa os dados já baixados localmente, então é instantâneo."""
     return threat_feed_lists.describe_ip_feed_check(ip)
+
+
+@tool
+def check_ioc_recon_signal(ip: str) -> str:
+    """Verifica se um IP já mostrou sinal de reconhecimento (tocou
+    honeypot ou gerou alerta de DPI categorizado como varredura) e, se
+    sim, escala a reputação dele na threat_intel para 'reincidente
+    conhecido' — quem varreu já é tratado como ameaça antes de atacar de
+    verdade. Retorna o que foi feito, ou aviso de que nada precisou
+    mudar (sem sinal, ou já era reincidente)."""
+    result = ioc_correlation.correlate_and_escalate(ip)
+    return result or f"{ip}: sem sinal de reconhecimento novo, ou já era reincidente conhecido."
+
+
+@tool
+def list_ioc_recon_watchlist() -> str:
+    """Lista os IPs que mostraram sinal de reconhecimento via DPI."""
+    return ioc_correlation.describe_recon_watchlist()
 
 
 @tool
@@ -948,6 +967,8 @@ TOOLS = [
     check_external_threat_feeds,
     refresh_threat_feed_lists,
     check_ip_against_threat_feed_lists,
+    check_ioc_recon_signal,
+    list_ioc_recon_watchlist,
     find_similar_attacker_fingerprints,
     describe_threat_feed_status,
     check_file_hash_reputation,
