@@ -35,6 +35,7 @@ from database.db import (
     record_threat_isolation,
 )
 from tools import firewall, honeypot
+from tools.anomaly import record_current_sample
 from tools.audit import create_checkpoint
 from tools.notify import send_notification
 from tools.policy import classify_threats
@@ -68,6 +69,7 @@ def monitor_loop(stop_event: threading.Event):
             _detector.sample()
             now = time.time()
             counts = _detector.snapshot_counts()
+            record_current_sample(sum(counts.values()), len(counts))
             severe, moderate = classify_threats(
                 counts, _detector.threshold, AUTO_ISOLATE_MULTIPLIER
             )

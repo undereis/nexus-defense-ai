@@ -48,6 +48,13 @@ NOTIFY_WEBHOOK_FORMAT = os.getenv("NOTIFY_WEBHOOK_FORMAT", "slack")  # slack | d
 # para verificar que requisições em /slack/command vêm mesmo do Slack.
 SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
 
+# Feeds externos de threat intelligence (todos com tier gratuito). Vazio =
+# a correlação correspondente é pulada, sem quebrar nada — igual ao padrão
+# de NOTIFY_WEBHOOK_URL acima.
+ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
+VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
+SHODAN_API_KEY = os.getenv("SHODAN_API_KEY", "")
+
 # Bot User OAuth Token (xoxb-...) + canal de destino, para postar notificações
 # direto via Slack Web API (chat.postMessage) em vez de um webhook genérico.
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
