@@ -68,6 +68,11 @@ risk_gate.register_action(
     lambda host, command, user, port: network_devices._raw_ssh(host, command, user, port),
 )
 
+from tools import bgp_flowspec
+
+risk_gate.register_action("bgp_flowspec_announce", bgp_flowspec.announce_flowspec_rule)
+risk_gate.register_action("bgp_flowspec_withdraw", bgp_flowspec.withdraw_flowspec_rule)
+
 
 @tool
 def check_traffic_anomaly() -> str:
@@ -792,6 +797,53 @@ def configure_network_device(
 
 
 @tool
+def propose_bgp_flowspec_block(
+    dest_prefix: str, protocol: str = "", dest_port: str = "",
+    source_prefix: str = "", action: str = "discard", rate_limit_bps: int | None = None,
+) -> str:
+    """Propõe uma regra BGP FlowSpec para o upstream filtrar tráfego ANTES
+    de chegar na borda da Xfiber — mais poderoso que isolate_ip (que só
+    bloqueia localmente, depois que o tráfego já consumiu o link).
+    dest_prefix é obrigatório (ex: IP do alvo do ataque, '203.0.113.5/32').
+    protocol: tcp/udp/icmp. action: discard (descarta), accept, ou
+    rate-limit (exige rate_limit_bps). ALTO RISCO MÁXIMO: programa
+    roteamento real de uma ISP com clientes reais — NUNCA executa
+    direto, sempre fica pendente até {CREATOR_NAME} confirmar com o
+    código enviado fora desta conversa. Valide a regra com cuidado antes
+    de propor: um dest_prefix errado pode bloquear clientes legítimos,
+    não o atacante."""
+    try:
+        rule = bgp_flowspec.build_rule(dest_prefix, protocol, dest_port, source_prefix, action, rate_limit_bps)
+    except ValueError as exc:
+        return f"Regra inválida, não foi proposta: {exc}"
+
+    summary = f"Anunciar FlowSpec ao upstream: {rule['description']}"
+    return risk_gate.request_confirmation(
+        "bgp_flowspec_announce", summary, kb_query="BGP flowspec RFC 5575",
+        dest_prefix=dest_prefix, protocol=protocol, dest_port=dest_port,
+        source_prefix=source_prefix, action=action, rate_limit_bps=rate_limit_bps,
+    )
+
+
+@tool
+def propose_bgp_flowspec_withdraw(rule_id: int) -> str:
+    """Propõe retirar uma regra FlowSpec já anunciada (ver
+    list_bgp_flowspec_rules para os ids ativos). Mesmo gate de
+    confirmação do anúncio — retirar uma regra também é uma mudança real
+    de roteamento."""
+    summary = f"Retirar regra FlowSpec #{rule_id}"
+    return risk_gate.request_confirmation(
+        "bgp_flowspec_withdraw", summary, kb_query="BGP flowspec RFC 5575", rule_id=rule_id
+    )
+
+
+@tool
+def list_bgp_flowspec_rules() -> str:
+    """Lista as regras FlowSpec atualmente anunciadas ao upstream."""
+    return bgp_flowspec.list_active_rules()
+
+
+@tool
 def list_pending_actions() -> str:
     """Lista ações de alto risco aguardando confirmação explícita do
     criador (exploração ativa, brute force, SQLMap, escrita no Mikrotik).
@@ -894,6 +946,9 @@ TOOLS = [
     generate_social_engineering_content,
     brute_force_login,
     run_sqlmap_scan,
+    propose_bgp_flowspec_block,
+    propose_bgp_flowspec_withdraw,
+    list_bgp_flowspec_rules,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
