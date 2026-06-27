@@ -17,6 +17,33 @@ from config import ABUSEIPDB_API_KEY, SHODAN_API_KEY, VIRUSTOTAL_API_KEY
 
 _TIMEOUT_SECONDS = 10
 
+# Categorias numéricas do AbuseIPDB (lista oficial em abuseipdb.com/categories).
+ABUSEIPDB_CATEGORY_HACKING = 15
+ABUSEIPDB_CATEGORY_PORT_SCAN = 14
+ABUSEIPDB_CATEGORY_DDOS = 4
+ABUSEIPDB_CATEGORY_BRUTE_FORCE = 18
+ABUSEIPDB_CATEGORY_SSH = 22
+
+_REASON_KEYWORD_CATEGORIES = (
+    (("ddos", "acima do normal", "volume"), ABUSEIPDB_CATEGORY_DDOS),
+    (("varredura", "scan", "reconhecimento", "feed"), ABUSEIPDB_CATEGORY_PORT_SCAN),
+    (("honeypot", "credencial", "senha", "brute", "ftp", "http"), ABUSEIPDB_CATEGORY_BRUTE_FORCE),
+    (("ssh",), ABUSEIPDB_CATEGORY_SSH),
+)
+
+
+def categorize_isolation_reason(reason: str) -> list[int]:
+    """Deriva categorias do AbuseIPDB a partir do texto do motivo de
+    isolamento já usado internamente — sem exigir que cada caller saiba
+    a taxonomia do AbuseIPDB. Sempre inclui 'Hacking' (15) como categoria
+    genérica de fallback."""
+    reason_lower = reason.lower()
+    categories = {ABUSEIPDB_CATEGORY_HACKING}
+    for keywords, category in _REASON_KEYWORD_CATEGORIES:
+        if any(kw in reason_lower for kw in keywords):
+            categories.add(category)
+    return sorted(categories)
+
 
 def check_abuseipdb(ip: str) -> str:
     """Consulta o histórico de denúncias de abuso de um IP no AbuseIPDB
@@ -136,3 +163,28 @@ def correlate_ip(ip: str) -> str:
     funções individuais quando quiser uma visão externa completa."""
     sections = [check_abuseipdb(ip), check_virustotal_ip(ip), check_shodan(ip)]
     return "\n\n".join(sections)
+
+
+def report_to_abuseipdb(ip: str, categories: list[int], comment: str) -> str:
+    """Reporta um IP ao AbuseIPDB (POST /report) — contamina a reputação
+    GLOBAL do atacante, visível para qualquer outra rede que consulte
+    esse IP depois. categories: ver ABUSEIPDB_CATEGORY_* acima ou
+    categorize_isolation_reason(). Ação real e pública: o report fica
+    visível no perfil daquele IP no site do AbuseIPDB."""
+    if not ABUSEIPDB_API_KEY:
+        return "AbuseIPDB não configurado (defina ABUSEIPDB_API_KEY no .env) — report não enviado."
+    try:
+        resp = requests.post(
+            "https://api.abuseipdb.com/api/v2/report",
+            headers={"Key": ABUSEIPDB_API_KEY, "Accept": "application/json"},
+            data={"ip": ip, "categories": ",".join(str(c) for c in categories), "comment": comment},
+            timeout=_TIMEOUT_SECONDS,
+        )
+        data = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        return f"Falha ao reportar {ip} ao AbuseIPDB: {exc}"
+
+    if "errors" in data:
+        return f"AbuseIPDB rejeitou o report de {ip}: {data['errors']}"
+    new_score = data.get("data", {}).get("abuseConfidenceScore")
+    return f"{ip} reportado ao AbuseIPDB (categorias {categories}). Novo confidence score: {new_score}."

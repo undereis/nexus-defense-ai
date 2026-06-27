@@ -7,13 +7,40 @@ Isso permite reagir mais rápido a reincidentes — um IP que já foi
 isolado antes não precisa esperar o mesmo processo de novo.
 """
 
+from config import AUTO_REPORT_ABUSEIPDB
 from database.db import (
     get_findings_for_host,
     get_threat_history,
     list_repeat_offenders,
+    log_event,
     record_threat_flag,
     record_threat_isolation,
 )
+
+
+def record_confirmed_isolation(ip: str, reason: str = "") -> None:
+    """Ponto único para 'um IP foi confirmadamente isolado' — registra na
+    memória institucional E, se configurado, reporta automaticamente ao
+    AbuseIPDB (contamina a reputação global do atacante, sem precisar
+    pedir). Substitui chamar record_threat_isolation direto nos 4 lugares
+    que faziam isso (main.py x2, agents/nexus_agent.py, tools/honeypot.py)
+    — agora o reporte automático vale para todos eles de uma vez, sem
+    duplicar a lógica.
+
+    Best-effort: falha ao reportar nunca propaga (rede instável, API
+    fora do ar) — o isolamento local já aconteceu, é o que importa."""
+    record_threat_isolation(ip)
+    if not AUTO_REPORT_ABUSEIPDB:
+        return
+    try:
+        from tools import threat_feeds
+
+        categories = threat_feeds.categorize_isolation_reason(reason)
+        comment = f"Isolado automaticamente pela Nexus Defense AI (Xfiber). Motivo: {reason or 'não especificado'}."
+        result = threat_feeds.report_to_abuseipdb(ip, categories, comment)
+        log_event("abuseipdb_auto_report", ip, result, action_taken="reportado")
+    except Exception as exc:
+        log_event("abuseipdb_auto_report_error", ip, str(exc), action_taken="falhou")
 
 
 def reputation_score(times_flagged: int, times_isolated: int) -> int:

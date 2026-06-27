@@ -16,7 +16,7 @@ def honeypot_module(monkeypatch, tmp_path):
     import tools.honeypot as honeypot
     importlib.reload(honeypot)
     monkeypatch.setattr(honeypot.firewall, "block_ip", lambda ip, reason: f"IP {ip} bloqueado.")
-    monkeypatch.setattr(honeypot, "record_threat_isolation", lambda ip: None)
+    monkeypatch.setattr(honeypot, "record_confirmed_isolation", lambda ip, reason="": None)
     monkeypatch.setattr(honeypot.notify, "send_notification", lambda *a, **k: True)
     yield honeypot, dbmod
     honeypot.stop()
