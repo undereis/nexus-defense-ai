@@ -80,7 +80,7 @@ interativa ou API REST.
 
 ## Onde está o quê
 
-- **Agente LangGraph:** `agents/nexus_agent.py` (160 tools registradas)
+- **Agente LangGraph:** `agents/nexus_agent.py` (162 tools registradas)
 - **Engine de playbooks:** `tools/playbook.py`
 - **Gate de confirmação:** `tools/risk.py`
 - **Firewall abstrato:** `tools/firewall.py` → backends em `tools/firewall_backends/`
@@ -88,11 +88,12 @@ interativa ou API REST.
 - **Config central:** `config.py` (todos os toggles de feature)
 - **Mapa de infraestrutura própria:** `tools/infrastructure.py` (IPs críticos nunca auto-bloqueados)
 - **Conhecimento da rede (Fase 5):** `tools/asset_inventory.py` · `tools/client_baseline.py` · `tools/dns_monitor.py`
+- **Baseline robusta anti-envenenamento (Fase 7, item 2):** `tools/robust_stats.py` (z-score modificado por mediana/MAD `0.6745*(x-med)/MAD`, funções puras). Roda EM PARALELO ao z-score clássico em `anomaly.py` e `client_baseline.py`: `is_anomaly = clássico OU robusto` (o robusto só ACRESCENTA detecção, nunca cega — direção segura); `poisoning_suspected` dispara quando só o robusto acusa (média arrastada por aumento lento = "frog boiling"). MAD==0 → z robusto 0.0 (deixa o caso degenerado para o clássico, evita falso positivo). Relatórios de maturidade `baseline_maturity_report()` / `describe_client_baseline_maturity()` mostram quantos dos 168 slots semanais (hora×dia) já têm histórico suficiente — onde a detecção já vale e onde ainda é cega.
 - **Risco por cliente (Fase 7, item 3):** `tools/client_risk.py` (agrega sinais JÁ persistidos do CIDR de cada cliente — reputação threat_intel + honeypot + IPs bloqueados — num score/tier baixo/médio/alto; stateless, recalculado sob demanda. Clientes arriscados são monitorados mais agressivamente: `adjusted_z_threshold` baixa o z-score do `client_baseline` com piso `_Z_FLOOR=1.5`, plugado no `monitor_loop` via `check_all_client_anomalies(..., z_threshold_fn=...)`)
 - **Auto-ajuste de thresholds (Fase 7, item 4):** `tools/threshold_tuning.py` (a Nexus aprende com o feedback do operador sobre alertas — `fp`/`tp`/`missed` na tabela `alert_feedback` — e propõe recalibrar o z-score: muito `fp` → subir/menos sensível, muito `missed` → baixar/mais sensível. Override aprendido em `tuned_thresholds`, lido por `effective_threshold` e composto com o item 3 dentro de `adjusted_z_threshold`. **Bounded + operador no loop** — ver "Regras invioláveis")
 - **DNS por dentro (BrbOS):** `tools/brbos.py` (API REST do resolver: stats + RPZ block/unblock + rate limit; escrita gated)
 - **Contra-inteligência (Fase 6):** `tools/ttp_profile.py` (perfil de grupo por TTPs: clustering determinístico de atacantes por comportamento/ASN/técnica) · `tools/tool_fingerprint.py` (fingerprint da ferramenta do atacante: User-Agent/credenciais/comportamento → sqlmap/Nmap/Mirai/etc., por assinatura) · `tools/deception.py` (deception ativa: hosts-isca com banners falsos no espaço morto de honeynet + mapa falso + detecção de consumo; gate `_is_safe_decoy_ip` recusa infra real, só vive em honeynet declarada; defensivo, sem hack-back) · `tools/malware_sandbox.py` (sandbox de malware: análise ESTÁTICA + extração de IOC roda sempre, não executa nada; detonação DINÂMICA atrás de gate duplo `_detonation_preflight` — `ALLOW_MALWARE_DETONATION` + `MALWARE_SANDBOX_LAB_TOKEN` + backend — recusa fora de lab e, nesta versão, não há backend wirado: nenhum caminho de código executa a amostra). Read-only/registro-local.
 - **Memória da Nexus (Fase 7):** `memory/memory_store.py` (janela rolante das últimas N mensagens de conversa, recarregada no início da sessão) · `memory/fact_store.py` (memória de LONGO PRAZO: fatos/decisões duráveis na tabela `memory_facts`+FTS5, recuperados por relevância via `recall_facts`, soft-delete via `forget_fact`; os mais importantes são injetados no system prompt em `build_agent` — a Nexus "já sabe" sem reexplicação). NÃO guardar segredo cru (senha/token), só o fato.
-- **Testes:** `tests/` (63 arquivos, ~693 passando; 14 falham só no sandbox: socket/ping/recon)
+- **Testes:** `tests/` (65 arquivos, ~710 passando; 14 falham só no sandbox: socket/ping/recon)
 - **Base de conhecimento:** `workdir/apostilas/` (16 apostilas ingeridas via RAG)
 - **Docs detalhadas:** `/docs/` (ler só quando a tarefa exigir)

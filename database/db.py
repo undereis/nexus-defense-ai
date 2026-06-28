@@ -1178,6 +1178,17 @@ def count_traffic_samples() -> int:
         return row[0] if row else 0
 
 
+def get_traffic_slot_coverage():
+    """Retorna [(hour_of_day, day_of_week, count)] de amostras por slot — base
+    do relatório de maturidade da baseline global (quantos dos 168 slots
+    semanais já têm histórico suficiente)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT hour_of_day, day_of_week, COUNT(*) FROM traffic_baseline_samples "
+            "GROUP BY hour_of_day, day_of_week"
+        ).fetchall()
+
+
 def record_flowspec_rule(rule_text: str, description: str) -> int:
     with get_conn() as conn:
         cur = conn.execute(
@@ -1752,6 +1763,17 @@ def get_client_traffic_samples_for_slot(client_id: str, hour_of_day: int, day_of
             "WHERE client_id = ? AND hour_of_day = ? AND day_of_week = ? "
             "ORDER BY id DESC LIMIT 200",
             (client_id, hour_of_day, day_of_week),
+        ).fetchall()
+
+
+def get_client_traffic_slot_coverage(client_id: str):
+    """Retorna [(hour_of_day, day_of_week, count)] das amostras de um cliente —
+    base do relatório de maturidade da baseline daquele cliente."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT hour_of_day, day_of_week, COUNT(*) FROM client_traffic_samples "
+            "WHERE client_id = ? GROUP BY hour_of_day, day_of_week",
+            (client_id,),
         ).fetchall()
 
 

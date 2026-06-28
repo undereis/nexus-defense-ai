@@ -102,6 +102,15 @@ def check_traffic_anomaly() -> str:
 
 
 @tool
+def baseline_maturity() -> str:
+    """Mostra quão pronta está a baseline GLOBAL de detecção por horário: que
+    fração dos 168 slots semanais (hora×dia) já tem amostras suficientes, total
+    coletado e se a detecção por z-score já vale ou ainda está cega. Use para
+    saber se já dá para confiar nas anomalias estatísticas."""
+    return anomaly.baseline_maturity_report()
+
+
+@tool
 def check_network_status() -> str:
     """Verifica o estado atual da rede: IPs conectados e contagens, e se algum
     IP está ultrapassando o limite de conexões (possível DDoS)."""
@@ -1408,6 +1417,15 @@ def check_client_anomaly_status(client_id: str, total_connections: int) -> str:
 
 
 @tool
+def client_baseline_maturity(client_id: str) -> str:
+    """Mostra quão pronta está a baseline de UM cliente: cobertura dos 168 slots
+    semanais (hora×dia) e quantos já têm amostras suficientes. Diz onde a
+    detecção de anomalia daquele cliente já vale e onde ainda é cega por falta
+    de histórico."""
+    return client_baseline.describe_client_baseline_maturity(client_id)
+
+
+@tool
 def list_all_client_baselines() -> str:
     """Resume o status de baseline de todos os clientes cadastrados:
     média histórica de tráfego, desvio padrão e quantidade de amostras.
@@ -1573,6 +1591,7 @@ def brbos_ratelimit_status() -> str:
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
+    baseline_maturity,
     isolate_ip,
     release_ip,
     list_isolated_ips,
@@ -1708,6 +1727,7 @@ TOOLS = [
     remove_client_profile,
     list_client_profiles,
     check_client_anomaly_status,
+    client_baseline_maturity,
     list_all_client_baselines,
     client_risk_report,
     rank_client_risk,
