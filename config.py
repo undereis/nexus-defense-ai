@@ -221,3 +221,22 @@ ASSET_INVENTORY_SCAN_INTERVAL = int(os.getenv("ASSET_INVENTORY_SCAN_INTERVAL", "
 # ou 'light' (ping + top 100 portas TCP, detecta serviços). 'passive' é
 # mais rápido e menos intrusivo; 'light' gera mais informação de auditoria.
 ASSET_INVENTORY_SCAN_MODE = os.getenv("ASSET_INVENTORY_SCAN_MODE", "passive")
+
+# Monitoramento dos DNS servers (resolvers .90/.91/.92). Intervalo em segundos
+# do loop que faz health check + auditoria de portas + validade de certificado.
+# 0 (padrão) = desativado; os servers precisam ser cadastrados primeiro com
+# register_dns_server (ou via DNS_SERVERS abaixo) antes de ligar o loop.
+DNS_MONITOR_INTERVAL = int(os.getenv("DNS_MONITOR_INTERVAL", "0"))
+
+# Lista de IPs de DNS servers para cadastrar automaticamente no boot, separados
+# por vírgula (ex.: "192.168.0.90,192.168.0.91,192.168.0.92"). Vazio = só os
+# cadastrados manualmente via register_dns_server.
+DNS_SERVERS = os.getenv("DNS_SERVERS", "")
+
+# Domínio resolvido em cada health check para medir resposta/latência do
+# resolver. Use um domínio sempre resolvível e neutro.
+DNS_PROBE_DOMAIN = os.getenv("DNS_PROBE_DOMAIN", "example.com")
+
+# Avisa quando o certificado de DoT (853) / DoH (443) estiver a menos de N
+# dias de expirar. Cert vencido derruba DNS-over-TLS/HTTPS silenciosamente.
+DNS_CERT_WARN_DAYS = int(os.getenv("DNS_CERT_WARN_DAYS", "30"))

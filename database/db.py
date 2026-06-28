@@ -270,6 +270,28 @@ CREATE TABLE IF NOT EXISTS client_traffic_samples (
 );
 
 CREATE INDEX IF NOT EXISTS idx_client_traffic_samples_slot ON client_traffic_samples(client_id, hour_of_day, day_of_week);
+
+CREATE TABLE IF NOT EXISTS dns_servers (
+    ip TEXT PRIMARY KEY,
+    hostname TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS dns_health_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL,
+    reachable INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT -1,
+    query_status TEXT NOT NULL DEFAULT '',
+    open_ports_json TEXT NOT NULL DEFAULT '[]',
+    risky_ports_json TEXT NOT NULL DEFAULT '[]',
+    cert_days_left INTEGER,
+    problems_json TEXT NOT NULL DEFAULT '[]',
+    checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_dns_health_checks_ip ON dns_health_checks(ip);
 """
 
 
@@ -1237,4 +1259,63 @@ def get_client_traffic_samples_for_slot(client_id: str, hour_of_day: int, day_of
             "WHERE client_id = ? AND hour_of_day = ? AND day_of_week = ? "
             "ORDER BY id DESC LIMIT 200",
             (client_id, hour_of_day, day_of_week),
+        ).fetchall()
+
+
+# ---------- DNS servers (monitoramento de resolvers) ----------
+
+def add_dns_server(ip: str, hostname: str = "", description: str = ""):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO dns_servers (ip, hostname, description) "
+            "VALUES (?, ?, ?)",
+            (ip, hostname, description),
+        )
+
+
+def remove_dns_server(ip: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM dns_servers WHERE ip = ?", (ip,))
+
+
+def list_dns_servers():
+    """Retorna (ip, hostname, description, added_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, hostname, description, added_at "
+            "FROM dns_servers ORDER BY ip"
+        ).fetchall()
+
+
+def record_dns_health_check(ip: str, reachable: bool, latency_ms: int,
+                            query_status: str, open_ports_json: str,
+                            risky_ports_json: str, cert_days_left,
+                            problems_json: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO dns_health_checks "
+            "(ip, reachable, latency_ms, query_status, open_ports_json, "
+            "risky_ports_json, cert_days_left, problems_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ip, 1 if reachable else 0, latency_ms, query_status,
+             open_ports_json, risky_ports_json, cert_days_left, problems_json),
+        )
+
+
+def list_dns_health_checks(ip: str | None = None, limit: int = 20):
+    """Retorna (ip, reachable, latency_ms, query_status, open_ports_json,
+    risky_ports_json, cert_days_left, problems_json, checked_at)."""
+    with get_conn() as conn:
+        if ip:
+            return conn.execute(
+                "SELECT ip, reachable, latency_ms, query_status, open_ports_json, "
+                "risky_ports_json, cert_days_left, problems_json, checked_at "
+                "FROM dns_health_checks WHERE ip = ? ORDER BY id DESC LIMIT ?",
+                (ip, limit),
+            ).fetchall()
+        return conn.execute(
+            "SELECT ip, reachable, latency_ms, query_status, open_ports_json, "
+            "risky_ports_json, cert_days_left, problems_json, checked_at "
+            "FROM dns_health_checks ORDER BY id DESC LIMIT ?",
+            (limit,),
         ).fetchall()
