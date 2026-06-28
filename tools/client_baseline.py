@@ -26,13 +26,16 @@ from database.db import (
     add_client_profile as _db_add_client_profile,
     get_client_profile,
     get_client_traffic_samples_for_slot,
+    get_client_traffic_slot_coverage,
     list_client_profiles as _db_list_client_profiles,
     record_client_traffic_sample,
     remove_client_profile as _db_remove_client_profile,
 )
+from tools.robust_stats import median_mad, modified_z_score
 
 MIN_SAMPLES = 5
 DEFAULT_Z_THRESHOLD = 3.0
+_TOTAL_WEEKLY_SLOTS = 24 * 7  # 168 combinações hora×dia-da-semana
 
 
 def _ip_to_client(ip: str) -> str | None:
@@ -99,22 +102,26 @@ def record_all_client_samples(counts: dict[str, int],
         )
 
 
-def _baseline_stats(client_id: str, hour: int,
-                     dow: int) -> tuple[float, float, int] | None:
+def _baseline_stats(client_id: str, hour: int, dow: int):
+    """(mean, stdev, median, mad, n) do slot do cliente, ou None se insuficiente."""
     rows = get_client_traffic_samples_for_slot(client_id, hour, dow)
     if len(rows) < MIN_SAMPLES:
         return None
     totals = [r[0] for r in rows]
     mean = statistics.mean(totals)
     stdev = statistics.stdev(totals) if len(totals) > 1 else 0.0
-    return mean, stdev, len(rows)
+    median, mad = median_mad(totals)
+    return mean, stdev, median, mad, len(rows)
 
 
 def check_client_anomaly(client_id: str, total_connections: int,
                           now: datetime | None = None,
                           z_threshold: float = DEFAULT_Z_THRESHOLD) -> dict:
-    """Compara o volume atual de um cliente com a sua baseline.
-    Retorna dict com is_anomaly, z_score, mean, stdev, samples_used."""
+    """Compara o volume atual de um cliente com a sua baseline. Roda o z-score
+    clássico (média/desvio) e o ROBUSTO (mediana/MAD, anti-envenenamento) em
+    paralelo: is_anomaly dispara se qualquer um cruzar o threshold; o robusto
+    só acrescenta detecção. `poisoning_suspected` marca quando só o robusto
+    acusa (média possivelmente arrastada)."""
     now = now or datetime.now(timezone.utc)
     stats = _baseline_stats(client_id, now.hour, now.weekday())
     if stats is None:
@@ -124,16 +131,25 @@ def check_client_anomaly(client_id: str, total_connections: int,
             "samples_used": 0,
             "client_id": client_id,
         }
-    mean, stdev, n = stats
+    mean, stdev, median, mad, n = stats
     if stdev == 0:
         z_score = float("inf") if total_connections != mean else 0.0
     else:
         z_score = (total_connections - mean) / stdev
+    robust_z = modified_z_score(total_connections, median, mad)
+    classic_anom = z_score >= z_threshold
+    robust_anom = robust_z >= z_threshold
     return {
-        "is_anomaly": z_score >= z_threshold,
+        "is_anomaly": classic_anom or robust_anom,
         "z_score": round(z_score, 2) if z_score != float("inf") else z_score,
+        "robust_z_score": round(robust_z, 2) if robust_z != float("inf") else robust_z,
+        "classic_anomaly": classic_anom,
+        "robust_anomaly": robust_anom,
+        "poisoning_suspected": robust_anom and not classic_anom,
         "mean": round(mean, 1),
         "stdev": round(stdev, 1),
+        "median": round(median, 1),
+        "mad": round(mad, 1),
         "samples_used": n,
         "current": total_connections,
         "client_id": client_id,
@@ -186,12 +202,19 @@ def describe_client_anomaly_status(client_id: str,
             "os mesmos horários várias vezes."
         )
     status = "ANOMALIA DETECTADA" if result["is_anomaly"] else "dentro do padrão normal"
-    return (
+    text = (
         f"Cliente '{client_id}' ({cidr}): {result['current']} conexões — {status}.\n"
         f"Baseline deste horário: média={result['mean']}, "
         f"desvio={result['stdev']} ({result['samples_used']} amostras). "
-        f"Z-score: {result['z_score']}"
+        f"Z-score clássico: {result['z_score']} | robusto "
+        f"(mediana={result['median']}, MAD={result['mad']}): {result['robust_z_score']}"
     )
+    if result.get("poisoning_suspected"):
+        text += (
+            "\nATENÇÃO: só o detector robusto acusa anomalia — possível "
+            "envenenamento lento da baseline deste cliente (média arrastada)."
+        )
+    return text
 
 
 def describe_all_client_baselines() -> str:
@@ -210,9 +233,39 @@ def describe_all_client_baselines() -> str:
                 f"(menos de {MIN_SAMPLES} amostras neste horário)"
             )
         else:
-            mean, stdev, n = stats
+            mean, stdev, median, mad, n = stats
             lines.append(
                 f"  {client_id} ({cidr}): média={round(mean,1)} "
-                f"desvio={round(stdev,1)} ({n} amostras)"
+                f"desvio={round(stdev,1)} mediana={round(median,1)} "
+                f"MAD={round(mad,1)} ({n} amostras)"
             )
     return "\n".join(lines)
+
+
+def describe_client_baseline_maturity(client_id: str) -> str:
+    """Quão pronta está a baseline de UM cliente: cobertura dos 168 slots
+    semanais (hora×dia) e quantos já têm amostras suficientes — onde a detecção
+    daquele cliente já vale e onde ainda é cega."""
+    profile = get_client_profile(client_id)
+    if not profile:
+        return (
+            f"Cliente '{client_id}' não encontrado. "
+            "Cadastre com add_client_profile."
+        )
+    coverage = get_client_traffic_slot_coverage(client_id)
+    total = sum(c for _h, _d, c in coverage)
+    slots_with_any = len(coverage)
+    slots_ready = sum(1 for _h, _d, c in coverage if c >= MIN_SAMPLES)
+    pct_ready = 100.0 * slots_ready / _TOTAL_WEEKLY_SLOTS
+    if slots_ready == 0:
+        status = "ainda CEGA (nenhum slot com histórico suficiente)"
+    elif pct_ready < 50:
+        status = "PARCIAL (só parte da semana coberta)"
+    else:
+        status = "BOA cobertura"
+    return (
+        f"Maturidade da baseline do cliente '{client_id}':\n"
+        f"  Amostras: {total} | slots com dado: {slots_with_any}/{_TOTAL_WEEKLY_SLOTS} | "
+        f"slots prontos (>= {MIN_SAMPLES}): {slots_ready}/{_TOTAL_WEEKLY_SLOTS} "
+        f"({pct_ready:.0f}%)\n  Status: {status}"
+    )
