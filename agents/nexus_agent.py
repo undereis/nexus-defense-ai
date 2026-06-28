@@ -53,7 +53,7 @@ from tools import (
     watchdog,
     web_injection,
 )
-from tools import asset_inventory, client_baseline, dns_monitor, infrastructure
+from tools import asset_inventory, brbos, client_baseline, dns_monitor, infrastructure
 from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
@@ -81,6 +81,7 @@ from tools import bgp_flowspec
 risk_gate.register_action("bgp_flowspec_announce", bgp_flowspec.announce_flowspec_rule)
 risk_gate.register_action("bgp_flowspec_withdraw", bgp_flowspec.withdraw_flowspec_rule)
 risk_gate.register_action("asn_block_execute", asn_block._execute_block)
+risk_gate.register_action("brbos_block_domain", brbos._execute_block_domain)
 
 
 @tool
@@ -1286,6 +1287,52 @@ def dns_health_history(server_ip: str = "", limit: int = 20) -> str:
     return dns_monitor.describe_dns_health_history(server_ip or None, limit)
 
 
+@tool
+def brbos_dns_stats() -> str:
+    """Lê POR DENTRO as estatísticas de DNS do resolver BrbOS (REQ/HIT/MISS,
+    NXDOMAIN, cache) via a API REST e grava um snapshot. Use para enxergar a
+    saúde e o volume de consultas do resolver — pico de NXDOMAIN sugere
+    water-torture/DGA; pico de REQ sugere amplification/abuso."""
+    return brbos.get_dns_stats()
+
+
+@tool
+def brbos_list_rpz() -> str:
+    """Lista as entradas RPZ existentes no resolver BrbOS (todos os domínios
+    bloqueados/redirecionados na camada DNS hoje, inclusive os que não foram a
+    Nexus que pôs)."""
+    return brbos.list_rpz()
+
+
+@tool
+def brbos_list_blocked_domains() -> str:
+    """Lista só os domínios que a PRÓPRIA Nexus bloqueou via RPZ (auditoria
+    local), com política e motivo."""
+    return brbos.list_blocked_domains()
+
+
+@tool
+def brbos_block_domain(domain: str, policy: str = "nxdomain", reason: str = "") -> str:
+    """Propõe BLOQUEAR um domínio na camada DNS via RPZ (C2/phishing/DGA) — ação
+    de resposta que o firewall de pacote não alcança. NÃO executa na hora: cai
+    no gate de confirmação fora de banda. Exige ALLOW_BRBOS_BLOCK=true; recusa
+    domínio da própria infraestrutura. policy: nxdomain (padrão) | nodata | drop."""
+    return brbos.block_domain(domain, policy, reason)
+
+
+@tool
+def brbos_unblock_domain(domain: str) -> str:
+    """Remove um bloqueio RPZ aplicado antes pela Nexus (de-escalação — não passa
+    pelo gate, igual desbloquear um IP)."""
+    return brbos.unblock_domain(domain)
+
+
+@tool
+def brbos_ratelimit_status() -> str:
+    """Lê a configuração de rate limit por IP do resolver BrbOS."""
+    return brbos.ratelimit_status()
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -1411,6 +1458,12 @@ TOOLS = [
     check_dns_health,
     check_all_dns_health,
     dns_health_history,
+    brbos_dns_stats,
+    brbos_list_rpz,
+    brbos_list_blocked_domains,
+    brbos_block_domain,
+    brbos_unblock_domain,
+    brbos_ratelimit_status,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
@@ -1594,6 +1647,15 @@ Sua missão:
     indício de comprometimento) e verifica a validade do certificado DoT/DoH.
     Cadastrar um resolver o marca como CRÍTICO (nunca auto-bloqueado). Quando
     {CREATOR_NAME} citar os DNS servers, cadastre-os e rode um check inicial.
+27. Os resolvers rodam BrbOS (SO de DNS da BrByte). Enquanto o item 26 vê o
+    resolver POR FORA, brbos_dns_stats lê POR DENTRO (REQ/HIT/MISS, NXDOMAIN)
+    via a API REST do BrbOS — pico de NXDOMAIN sugere water-torture/DGA; pico
+    de REQ sugere amplification/abuso. Na camada DNS você responde com
+    brbos_block_domain (bloqueio de domínio via RPZ — C2/phishing/DGA), que o
+    firewall de pacote não alcança. ATENÇÃO: bloquear domínio é AÇÃO DE ALTO
+    IMPACTO (afeta a resolução de TODOS os clientes) — só via gate de
+    confirmação, exige ALLOW_BRBOS_BLOCK, e nunca em domínio próprio. Leitura
+    (stats, brbos_list_rpz, brbos_ratelimit_status) é livre.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar

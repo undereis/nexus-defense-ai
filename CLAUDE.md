@@ -16,13 +16,13 @@ interativa ou API REST.
 - **Persistência:** SQLite (`nexus.db`) — 20+ tabelas, hash chain de auditoria, FTS5
 - **Firewall:** pfctl (macOS) · iptables + ipset `hash:net` (Linux)
 - **API REST:** FastAPI (`api/server.py`) com autenticação por token
-- **Integrações:** Mikrotik RouterOS · BGP FlowSpec (ExaBGP) · AbuseIPDB · VirusTotal · Shodan · RIPEstat · Suricata DPI · Slack webhook
+- **Integrações:** Mikrotik RouterOS · BrbOS (DNS da BrByte, RPZ) · BGP FlowSpec (ExaBGP) · AbuseIPDB · VirusTotal · Shodan · RIPEstat · Suricata DPI · Slack webhook
 
 ## Comandos
 
 - **Testar:**         `venv/bin/pytest --tb=line -q`
 - **Testar (fase4):** `venv/bin/pytest tests/test_playbook.py tests/test_asn_block.py -v`
-- **Testar (fase5):** `venv/bin/pytest tests/test_infrastructure.py tests/test_asset_inventory.py tests/test_client_baseline.py tests/test_dns_monitor.py -v`
+- **Testar (fase5):** `venv/bin/pytest tests/test_infrastructure.py tests/test_asset_inventory.py tests/test_client_baseline.py tests/test_dns_monitor.py tests/test_brbos.py -v`
 - **Lint:**           `venv/bin/ruff check .` (requer `pip install ruff` — não vem no venv)
 - **CLI:**            `venv/bin/python main.py`
 - **API:**            `venv/bin/uvicorn api.server:app --reload`
@@ -32,8 +32,11 @@ interativa ou API REST.
 - `_AUTO_CAP = 2` em `tools/playbook.py` é **hardcoded** — nível 3 (BGP FlowSpec)
   **nunca executa automaticamente**, independente do valor de `PLAYBOOK_AUTO_LEVEL`.
 - Toda ação de BGP e ASN block passa por gate de confirmação fora de banda (`tools/risk.py`).
-- `ALLOW_ACTIVE_EXPLOITATION`, `ALLOW_ASN_BLOCK` e `ALLOW_BGP_FLOWSPEC` são **false** por padrão.
-  Não ativar sem contexto explícito do operador.
+- `ALLOW_ACTIVE_EXPLOITATION`, `ALLOW_ASN_BLOCK`, `ALLOW_BGP_FLOWSPEC` e `ALLOW_BRBOS_BLOCK`
+  são **false** por padrão. Não ativar sem contexto explícito do operador.
+- Bloqueio de domínio no DNS (RPZ via BrbOS) passa **sempre** pelo gate de confirmação
+  (`tools/risk.py`), mesmo com `ALLOW_BRBOS_BLOCK=true`; e a Nexus **nunca** bloqueia
+  domínio da própria infraestrutura (`_is_protected_domain` + `BRBOS_PROTECTED_DOMAINS`).
 - Mudanças em lógica de firewall ou playbook exigem que a suite de testes passe.
 - Nunca remover ou afrouxar o gate de confirmação de `tools/risk.py`.
 
@@ -59,7 +62,7 @@ interativa ou API REST.
 
 ## Onde está o quê
 
-- **Agente LangGraph:** `agents/nexus_agent.py` (120+ tools registradas)
+- **Agente LangGraph:** `agents/nexus_agent.py` (133 tools registradas)
 - **Engine de playbooks:** `tools/playbook.py`
 - **Gate de confirmação:** `tools/risk.py`
 - **Firewall abstrato:** `tools/firewall.py` → backends em `tools/firewall_backends/`
@@ -67,6 +70,7 @@ interativa ou API REST.
 - **Config central:** `config.py` (todos os toggles de feature)
 - **Mapa de infraestrutura própria:** `tools/infrastructure.py` (IPs críticos nunca auto-bloqueados)
 - **Conhecimento da rede (Fase 5):** `tools/asset_inventory.py` · `tools/client_baseline.py` · `tools/dns_monitor.py`
-- **Testes:** `tests/` (55 arquivos, ~527 passando; 14 falham só no sandbox: socket/ping/recon)
+- **DNS por dentro (BrbOS):** `tools/brbos.py` (API REST do resolver: stats + RPZ block/unblock + rate limit; escrita gated)
+- **Testes:** `tests/` (56 arquivos, ~552 passando; 14 falham só no sandbox: socket/ping/recon)
 - **Base de conhecimento:** `workdir/apostilas/` (16 apostilas ingeridas via RAG)
 - **Docs detalhadas:** `/docs/` (ler só quando a tarefa exigir)

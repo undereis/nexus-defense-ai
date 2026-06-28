@@ -292,6 +292,27 @@ CREATE TABLE IF NOT EXISTS dns_health_checks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_dns_health_checks_ip ON dns_health_checks(ip);
+
+CREATE TABLE IF NOT EXISTS brbos_rpz_blocks (
+    domain TEXT PRIMARY KEY,
+    action TEXT NOT NULL DEFAULT 'block',
+    policy TEXT NOT NULL DEFAULT 'nxdomain',
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS brbos_dns_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    raw_json TEXT NOT NULL DEFAULT '{}',
+    total_req INTEGER,
+    hit INTEGER,
+    miss INTEGER,
+    nxdomain INTEGER,
+    collected_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_brbos_dns_stats_host ON brbos_dns_stats(host);
 """
 
 
@@ -1317,5 +1338,71 @@ def list_dns_health_checks(ip: str | None = None, limit: int = 20):
             "SELECT ip, reachable, latency_ms, query_status, open_ports_json, "
             "risky_ports_json, cert_days_left, problems_json, checked_at "
             "FROM dns_health_checks ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+# ---------- BrbOS (integração com o SO de DNS da BrByte) ----------
+
+def record_brbos_rpz_action(domain: str, action: str = "block",
+                            policy: str = "nxdomain", reason: str = ""):
+    """Registra (auditoria local) um bloqueio de domínio aplicado via RPZ."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO brbos_rpz_blocks (domain, action, policy, reason) "
+            "VALUES (?, ?, ?, ?)",
+            (domain, action, policy, reason),
+        )
+
+
+def get_brbos_rpz_action(domain: str):
+    """Retorna (domain, action, policy, reason, created_at) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT domain, action, policy, reason, created_at "
+            "FROM brbos_rpz_blocks WHERE domain = ?",
+            (domain,),
+        ).fetchone()
+
+
+def remove_brbos_rpz_action(domain: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM brbos_rpz_blocks WHERE domain = ?", (domain,))
+
+
+def list_brbos_rpz_actions():
+    """Retorna (domain, action, policy, reason, created_at) ordenado por data."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT domain, action, policy, reason, created_at "
+            "FROM brbos_rpz_blocks ORDER BY created_at DESC"
+        ).fetchall()
+
+
+def record_brbos_dns_stats(host: str, raw_json: str, total_req=None,
+                           hit=None, miss=None, nxdomain=None):
+    """Grava um snapshot das estatísticas de DNS do BrbOS (série temporal
+    para baseline/anomalia futura)."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO brbos_dns_stats "
+            "(host, raw_json, total_req, hit, miss, nxdomain) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (host, raw_json, total_req, hit, miss, nxdomain),
+        )
+
+
+def list_brbos_dns_stats(host: str | None = None, limit: int = 50):
+    """Retorna (host, raw_json, total_req, hit, miss, nxdomain, collected_at)."""
+    with get_conn() as conn:
+        if host:
+            return conn.execute(
+                "SELECT host, raw_json, total_req, hit, miss, nxdomain, collected_at "
+                "FROM brbos_dns_stats WHERE host = ? ORDER BY id DESC LIMIT ?",
+                (host, limit),
+            ).fetchall()
+        return conn.execute(
+            "SELECT host, raw_json, total_req, hit, miss, nxdomain, collected_at "
+            "FROM brbos_dns_stats ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
