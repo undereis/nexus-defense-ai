@@ -240,3 +240,27 @@ DNS_PROBE_DOMAIN = os.getenv("DNS_PROBE_DOMAIN", "example.com")
 # Avisa quando o certificado de DoT (853) / DoH (443) estiver a menos de N
 # dias de expirar. Cert vencido derruba DNS-over-TLS/HTTPS silenciosamente.
 DNS_CERT_WARN_DAYS = int(os.getenv("DNS_CERT_WARN_DAYS", "30"))
+
+# BrbOS — SO de servidor DNS da BrByte que roda nos resolvers da Xfiber.
+# Enquanto tools/dns_monitor.py vê o resolver POR FORA (dig/porta/cert), a
+# integração BrbOS dá visão POR DENTRO via API REST (mesma porta da interface
+# web, padrão 8080): estatísticas de consultas, RPZ (bloqueio de domínio),
+# rate limit e ACL. Sem credenciais, as tools de BrbOS avisam "não
+# configurado" em vez de quebrar — mesmo padrão de mikrotik/threat_feeds.
+BRBOS_HOST = os.getenv("BRBOS_HOST", "")
+BRBOS_PORT = int(os.getenv("BRBOS_PORT", "8080"))
+BRBOS_USER = os.getenv("BRBOS_USER", "")
+BRBOS_PASSWORD = os.getenv("BRBOS_PASSWORD", "")
+BRBOS_USE_TLS = os.getenv("BRBOS_USE_TLS", "false").lower() == "true"
+
+# Habilita ESCRITA no BrbOS (bloqueio de domínio via RPZ). Desativado por
+# padrão; habilitar é deliberado. Mesmo habilitado, todo bloqueio passa pelo
+# gate de confirmação fora de banda (tools/risk.py) — igual ASN block.
+# Leitura (estatísticas, listar RPZ/rate limit) não depende deste toggle.
+ALLOW_BRBOS_BLOCK = os.getenv("ALLOW_BRBOS_BLOCK", "false").lower() == "true"
+
+# Domínios da PRÓPRIA infraestrutura que a Nexus NUNCA pode bloquear/sinkholar
+# (bloquear o próprio domínio derruba a rede inteira). Sufixos separados por
+# vírgula, ex.: "xfiber.com.br,xfiber.local". Defesa em profundidade além do
+# gate de confirmação — fortemente recomendado preencher.
+BRBOS_PROTECTED_DOMAINS = os.getenv("BRBOS_PROTECTED_DOMAINS", "")
