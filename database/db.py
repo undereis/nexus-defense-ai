@@ -353,6 +353,40 @@ CREATE TABLE IF NOT EXISTS brbos_dns_stats (
 );
 
 CREATE INDEX IF NOT EXISTS idx_brbos_dns_stats_host ON brbos_dns_stats(host);
+
+-- Memória institucional de longo prazo (Fase 7, item 1): fatos/decisões
+-- duráveis que sobrevivem entre sessões e são recuperados por relevância
+-- (FTS5), distinta da janela rolante de conversa (tabela `conversation`).
+CREATE TABLE IF NOT EXISTS memory_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT UNIQUE NOT NULL,
+    category TEXT NOT NULL DEFAULT 'fact',
+    content TEXT NOT NULL,
+    importance INTEGER NOT NULL DEFAULT 3,
+    source TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    recall_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_recalled_at TEXT
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+    content, slug, category, content='memory_facts', content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS memory_facts_ai AFTER INSERT ON memory_facts BEGIN
+    INSERT INTO memory_facts_fts(rowid, content, slug, category) VALUES (new.id, new.content, new.slug, new.category);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_facts_ad AFTER DELETE ON memory_facts BEGIN
+    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, content, slug, category) VALUES ('delete', old.id, old.content, old.slug, old.category);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts BEGIN
+    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, content, slug, category) VALUES ('delete', old.id, old.content, old.slug, old.category);
+    INSERT INTO memory_facts_fts(rowid, content, slug, category) VALUES (new.id, new.content, new.slug, new.category);
+END;
 """
 
 
@@ -454,6 +488,139 @@ def get_recent_messages(limit: int = 20):
             (limit,),
         ).fetchall()
     return list(reversed(rows))
+
+
+# ---------- Memória institucional de longo prazo (Fase 7, item 1) ----------
+
+def upsert_memory_fact(slug: str, category: str, content: str,
+                       importance: int = 3, source: str = "") -> str:
+    """Insere ou atualiza (pela slug) um fato durável. Reativa se estava
+    esquecido. Retorna 'created' ou 'updated'."""
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM memory_facts WHERE slug = ?", (slug,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE memory_facts SET category=?, content=?, importance=?, "
+                "source=?, active=1, updated_at=datetime('now') WHERE slug=?",
+                (category, content, importance, source, slug),
+            )
+            return "updated"
+        conn.execute(
+            "INSERT INTO memory_facts (slug, category, content, importance, source) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (slug, category, content, importance, source),
+        )
+        return "created"
+
+
+def search_memory_facts(query: str, limit: int = 8):
+    """Busca full-text nos fatos ativos. Retorna (slug, category, content,
+    importance, snippet) por relevância. Termos combinados com OR, cada um
+    como frase exata sanitizada (mesma proteção de search_knowledge)."""
+    terms = [t.replace('"', '""') for t in query.split() if t.strip()]
+    if not terms:
+        return []
+    match_expr = " OR ".join(f'"{t}"' for t in terms)
+    with get_conn() as conn:
+        return conn.execute(
+            """
+            SELECT mf.slug, mf.category, mf.content, mf.importance,
+                   snippet(memory_facts_fts, 0, '>>', '<<', '...', 40) as snippet
+            FROM memory_facts_fts
+            JOIN memory_facts mf ON mf.id = memory_facts_fts.rowid
+            WHERE memory_facts_fts MATCH ? AND mf.active = 1
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (match_expr, limit),
+        ).fetchall()
+
+
+def list_memory_facts(category: str | None = None,
+                      include_inactive: bool = False, limit: int = 200):
+    """Lista fatos (slug, category, content, importance, source, active,
+    recall_count, created_at, updated_at), mais importantes/recentes primeiro."""
+    conds, params = [], []
+    if not include_inactive:
+        conds.append("active = 1")
+    if category:
+        conds.append("category = ?")
+        params.append(category)
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    params.append(limit)
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT slug, category, content, importance, source, active, "
+            "recall_count, created_at, updated_at FROM memory_facts"
+            + where + " ORDER BY importance DESC, updated_at DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+
+
+def get_top_memory_facts(limit: int = 12):
+    """Os fatos ativos mais importantes/recentes — p/ injetar no contexto de
+    cada sessão. Retorna (slug, category, content, importance)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT slug, category, content, importance FROM memory_facts "
+            "WHERE active = 1 ORDER BY importance DESC, updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+def get_memory_fact(slug: str):
+    """Retorna o fato completo por slug, ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT slug, category, content, importance, source, active, "
+            "recall_count, created_at, updated_at, last_recalled_at "
+            "FROM memory_facts WHERE slug = ?",
+            (slug,),
+        ).fetchone()
+
+
+def forget_memory_fact(slug: str) -> bool:
+    """Soft-delete: desativa um fato ativo. True se existia e estava ativo."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE memory_facts SET active=0, updated_at=datetime('now') "
+            "WHERE slug=? AND active=1",
+            (slug,),
+        )
+        return cur.rowcount > 0
+
+
+def touch_memory_recall(slugs) -> None:
+    """Marca fatos como recém-recuperados (recall_count++ + timestamp)."""
+    slugs = list(slugs)
+    if not slugs:
+        return
+    with get_conn() as conn:
+        conn.executemany(
+            "UPDATE memory_facts SET recall_count = recall_count + 1, "
+            "last_recalled_at = datetime('now') WHERE slug = ?",
+            [(s,) for s in slugs],
+        )
+
+
+def count_memory_facts(active_only: bool = True) -> int:
+    with get_conn() as conn:
+        q = "SELECT COUNT(*) FROM memory_facts"
+        if active_only:
+            q += " WHERE active = 1"
+        return conn.execute(q).fetchone()[0]
+
+
+def count_memory_facts_by_category(active_only: bool = True):
+    """Retorna (category, total) agrupado, p/ o panorama da memória."""
+    with get_conn() as conn:
+        q = "SELECT category, COUNT(*) FROM memory_facts"
+        if active_only:
+            q += " WHERE active = 1"
+        q += " GROUP BY category ORDER BY category"
+        return conn.execute(q).fetchall()
 
 
 def record_blocked_ip(ip: str, reason: str):
