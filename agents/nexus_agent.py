@@ -58,6 +58,7 @@ from tools import tool_fingerprint
 from tools import deception
 from tools import malware_sandbox
 from tools import whois_lookup as whois_module
+from memory import fact_store
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
 
@@ -955,6 +956,46 @@ def detonate_malware_sample(filename: str) -> str:
 
 
 @tool
+def remember_fact(content: str, category: str = "fact", importance: int = 3) -> str:
+    """Memória de longo prazo: grava um FATO ou DECISÃO durável que deve
+    sobreviver entre sessões — para o operador não reexplicar nunca mais.
+    Use quando ele decidir algo, declarar uma preferência, ou revelar algo
+    sobre a rede que valha lembrar. category: decision, preference, network,
+    incident, reference ou fact. importance: 1 (trivial) a 5 (crítico)."""
+    return fact_store.remember_fact(content, category=category, importance=importance)
+
+
+@tool
+def recall_memory(query: str) -> str:
+    """Memória de longo prazo: busca por relevância os fatos/decisões já
+    memorizados sobre um assunto (vai além dos fatos já injetados no contexto).
+    Use antes de pedir ao operador algo que ele talvez já tenha dito."""
+    return fact_store.recall_facts(query)
+
+
+@tool
+def list_memory(category: str = "") -> str:
+    """Lista os fatos/decisões na memória de longo prazo, opcionalmente
+    filtrados por categoria (decision/preference/network/incident/reference/fact)."""
+    return fact_store.list_facts(category)
+
+
+@tool
+def forget_memory(slug: str) -> str:
+    """Esquece (desativa) um fato da memória de longo prazo pela sua slug —
+    quando ficou obsoleto ou foi superado. Não apaga histórico, só para de
+    recuperá-lo."""
+    return fact_store.forget_fact(slug)
+
+
+@tool
+def memory_overview() -> str:
+    """Panorama da memória de longo prazo: quantos fatos/decisões estão
+    memorizados, quebrados por categoria."""
+    return fact_store.memory_overview()
+
+
+@tool
 def list_forensics_plugins() -> str:
     """Lista os plugins mais comuns do Volatility3 (análise de memória)
     por categoria (windows/linux/mac), como referência antes de chamar
@@ -1568,6 +1609,11 @@ TOOLS = [
     correlate_malware_iocs,
     malware_sandbox_status,
     detonate_malware_sample,
+    remember_fact,
+    recall_memory,
+    list_memory,
+    forget_memory,
+    memory_overview,
     list_forensics_plugins,
     run_memory_forensics,
     generate_filesystem_timeline,
@@ -1650,6 +1696,15 @@ Sua missão:
    automaticamente para isolamento mais rápido pelo monitor — quando isso
    acontecer, explique a {CREATOR_NAME} que a ação foi mais rápida por causa
    do histórico, não foi um capricho seu.
+7b. Você também tem MEMÓRIA DE LONGO PRAZO de fatos e decisões (remember_fact,
+   recall_memory, list_memory, forget_memory): o conhecimento durável que
+   {CREATOR_NAME} não quer reexplicar — decisões tomadas, preferências,
+   topologia da rede, lições de incidentes. Os fatos mais importantes já
+   chegam no início da sessão. GRAVE um fato sempre que {CREATOR_NAME} decidir
+   algo durável, declarar uma preferência, ou revelar algo sobre a rede que
+   valha lembrar. Antes de pedir algo que ele talvez já tenha dito, use
+   recall_memory. Não memorize segredo cru (senha/token) — guarde o fato, não
+   a credencial.
 8. Toda auditoria de segurança (nmap, nikto, ssl labs, headers, zap) é
    automaticamente registrada no histórico do host (get_scan_history,
    list_audited_hosts). Antes de rodar um scan novo, considere checar
@@ -1820,5 +1875,11 @@ def build_agent():
         f"(geração de pretexto)"
     )
     prompt = SYSTEM_PROMPT.format(exploitation_status=exploitation_status)
+    # Memória de longo prazo (Fase 7): injeta os fatos/decisões duráveis mais
+    # importantes no início de cada sessão, para a Nexus "já saber" sem o
+    # operador reexplicar. Vazio = não polui o prompt.
+    memory_block = fact_store.long_term_memory_block()
+    if memory_block:
+        prompt = f"{prompt}\n\n{memory_block}"
     model = ChatAnthropic(model=MODEL_NAME, api_key=ANTHROPIC_API_KEY)
     return create_react_agent(model, TOOLS, prompt=prompt)
