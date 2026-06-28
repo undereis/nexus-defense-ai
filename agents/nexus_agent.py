@@ -54,6 +54,7 @@ from tools import (
     web_injection,
 )
 from tools import asset_inventory, brbos, client_baseline, dns_monitor, infrastructure, ttp_profile
+from tools import tool_fingerprint
 from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
@@ -280,6 +281,26 @@ def which_attacker_group(ip: str, hours: float = 168) -> str:
     grupo (outros membros = possível mesmo ator com IP diferente). Use para
     contextualizar um IP específico dentro de uma campanha maior."""
     return ttp_profile.which_group(ip, hours)
+
+
+@tool
+def fingerprint_attacker_tools(ip: str) -> str:
+    """Fingerprint da FERRAMENTA do atacante: a partir dos sinais já
+    capturados (User-Agent de honeytoken/DPI, credenciais tentadas no
+    honeypot, padrão de varredura), infere QUAL ferramenta/família o IP usou
+    — sqlmap, Nmap, masscan, Hydra, botnet IoT estilo Mirai, script Python
+    etc. Cada veredito vem com o sinal que o sustenta e o nível de confiança.
+    Read-only. Use quando o operador perguntar "com que ele atacou?",
+    "que scanner é esse?" ou quiser caracterizar tecnicamente um adversário."""
+    return tool_fingerprint.fingerprint_attacker_tools(ip)
+
+
+@tool
+def classify_tool_user_agent(user_agent: str) -> str:
+    """Classifica um User-Agent solto numa ferramenta/categoria (sqlmap,
+    Nmap, curl, navegador/forjado, vazio=bot...). Útil quando o operador
+    cola um UA de um log e pergunta "que ferramenta é essa?"."""
+    return tool_fingerprint.describe_user_agent(user_agent)
 
 
 @tool
@@ -1389,6 +1410,8 @@ TOOLS = [
     find_similar_attacker_fingerprints,
     profile_attacker_groups,
     which_attacker_group,
+    fingerprint_attacker_tools,
+    classify_tool_user_agent,
     describe_threat_feed_status,
     check_file_hash_reputation,
     check_watchdog_health,
