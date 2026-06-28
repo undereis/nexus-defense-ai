@@ -285,3 +285,13 @@ MALWARE_SANDBOX_LAB_TOKEN = os.getenv("MALWARE_SANDBOX_LAB_TOKEN", "")
 # detonação retorna "nenhum backend configurado" em vez de rodar algo.
 MALWARE_SANDBOX_BACKEND = os.getenv("MALWARE_SANDBOX_BACKEND", "")
 MALWARE_SANDBOX_TIMEOUT_SECONDS = int(os.getenv("MALWARE_SANDBOX_TIMEOUT_SECONDS", "120"))
+
+# --- Auto-ajuste de thresholds (Fase 7, item 4) ---
+# O MAIS sensível de segurança: afrouxar um threshold (subir o z-score) reduz
+# falsos positivos, mas pode CEGAR a detecção de ataques reais. Por isso o
+# ajuste é SEMPRE bounded (piso/teto fixos no código de tools/threshold_tuning,
+# passo limitado) e o operador fica no loop. Off por padrão: sem ele, a Nexus
+# só PROPÕE ajustes — aplicar exige confirmação explícita do operador
+# (confirm=True). Este toggle só serve para um futuro loop autônomo aplicar
+# dentro dos limites; nesta versão nenhum loop aplica sozinho.
+ALLOW_THRESHOLD_AUTOTUNE = os.getenv("ALLOW_THRESHOLD_AUTOTUNE", "false").lower() == "true"
