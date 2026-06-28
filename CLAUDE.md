@@ -59,10 +59,15 @@ interativa ou API REST.
   (DNS servers, roteadores marcados com `is_critical=True`) de auto-bloqueio.
 - Não commitar `.env` com tokens reais — usar `.env.example` como referência.
 - Não recarregar módulos com `importlib.reload()` dentro de testes — desfaz monkeypatches.
+- **Nunca** rodar probe/scan/descoberta de API contra infraestrutura de **PRODUÇÃO** —
+  em especial os resolvers DNS (BrbOS): são sensíveis a carga e rajadas de login
+  disparam o anti-brute-force, podendo travar a rede inteira (já aconteceu: derrubou
+  o DNS e exigiu reboot). Calibração só contra instância **local/lab**. Um login, zero
+  retry-loop, reaproveitar cookie.
 
 ## Onde está o quê
 
-- **Agente LangGraph:** `agents/nexus_agent.py` (133 tools registradas)
+- **Agente LangGraph:** `agents/nexus_agent.py` (135 tools registradas)
 - **Engine de playbooks:** `tools/playbook.py`
 - **Gate de confirmação:** `tools/risk.py`
 - **Firewall abstrato:** `tools/firewall.py` → backends em `tools/firewall_backends/`
@@ -71,6 +76,7 @@ interativa ou API REST.
 - **Mapa de infraestrutura própria:** `tools/infrastructure.py` (IPs críticos nunca auto-bloqueados)
 - **Conhecimento da rede (Fase 5):** `tools/asset_inventory.py` · `tools/client_baseline.py` · `tools/dns_monitor.py`
 - **DNS por dentro (BrbOS):** `tools/brbos.py` (API REST do resolver: stats + RPZ block/unblock + rate limit; escrita gated)
-- **Testes:** `tests/` (56 arquivos, ~552 passando; 14 falham só no sandbox: socket/ping/recon)
+- **Contra-inteligência (Fase 6):** `tools/ttp_profile.py` (perfil de grupo por TTPs: clustering determinístico de atacantes por comportamento/ASN/técnica; read-only)
+- **Testes:** `tests/` (57 arquivos, ~563 passando; 14 falham só no sandbox: socket/ping/recon)
 - **Base de conhecimento:** `workdir/apostilas/` (16 apostilas ingeridas via RAG)
 - **Docs detalhadas:** `/docs/` (ler só quando a tarefa exigir)
