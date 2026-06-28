@@ -170,6 +170,20 @@ CREATE TABLE IF NOT EXISTS honeynet_ranges (
     declared_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS decoy_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decoy_id TEXT NOT NULL UNIQUE,
+    hostname TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    os TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    services TEXT NOT NULL,
+    lure_level TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    consumed_count INTEGER NOT NULL DEFAULT 0,
+    last_consumed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tool_name TEXT NOT NULL,
@@ -1012,6 +1026,57 @@ def list_honeynet_ranges():
 def remove_honeynet_range(cidr: str) -> bool:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM honeynet_ranges WHERE cidr = ?", (cidr,))
+        return cur.rowcount > 0
+
+
+# ---------- deception ativa (decoy assets) ----------
+
+def add_decoy_asset(decoy_id: str, hostname: str, ip: str, os: str,
+                    profile: str, services_json: str, lure_level: str):
+    """Registra um host-isca (decoy) da deception ativa. `services_json` é o
+    JSON da lista de serviços/banners falsos. IP deve ser de espaço morto
+    (honeynet) — a validação fica em tools/deception.py, não aqui."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO decoy_assets (decoy_id, hostname, ip, os, profile, services, lure_level) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (decoy_id, hostname, ip, os, profile, services_json, lure_level),
+        )
+
+
+def list_decoy_assets():
+    """Retorna (decoy_id, hostname, ip, os, profile, services_json, lure_level,
+    created_at, consumed_count, last_consumed_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT decoy_id, hostname, ip, os, profile, services, lure_level, "
+            "created_at, consumed_count, last_consumed_at FROM decoy_assets "
+            "ORDER BY created_at"
+        ).fetchall()
+
+
+def get_decoy_ips() -> set[str]:
+    """Conjunto dos IPs atualmente ocupados por decoys (para alocar IP novo
+    sem colisão)."""
+    with get_conn() as conn:
+        return {r[0] for r in conn.execute("SELECT ip FROM decoy_assets").fetchall()}
+
+
+def remove_decoy_asset(decoy_id: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM decoy_assets WHERE decoy_id = ?", (decoy_id,))
+        return cur.rowcount > 0
+
+
+def record_decoy_consumption(ip: str) -> bool:
+    """Marca que o decoy de IP `ip` foi consumido (alguém agiu sobre a
+    informação falsa). Retorna True se havia um decoy nesse IP."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE decoy_assets SET consumed_count = consumed_count + 1, "
+            "last_consumed_at = datetime('now') WHERE ip = ?",
+            (ip,),
+        )
         return cur.rowcount > 0
 
 

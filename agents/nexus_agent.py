@@ -55,6 +55,7 @@ from tools import (
 )
 from tools import asset_inventory, brbos, client_baseline, dns_monitor, infrastructure, ttp_profile
 from tools import tool_fingerprint
+from tools import deception
 from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
@@ -864,6 +865,48 @@ def check_honeynet_violations() -> str:
 
 
 @tool
+def deploy_decoy_host(profile: str, ip: str = "") -> str:
+    """Deception ativa: declara um HOST-ISCA convincente (hostname plausível,
+    SO, serviços com banners deliberadamente antigos/suculentos) no espaço
+    morto de uma honeynet, para o atacante mapear e agir sobre rede FALSA.
+    profile: database, backup, iot_camera, vpn_gateway ou web_intranet.
+    Se ip vazio, aloca automaticamente um IP livre de uma honeynet declarada.
+    SEGURANÇA: recusa qualquer IP que seja infraestrutura própria/crítica ou
+    fora de honeynet — a Nexus nunca finge ser um host real. Defensivo, dentro
+    do próprio perímetro; não mexe em rede/firewall."""
+    return deception.deploy_decoy_host(profile, ip=ip or None)
+
+
+@tool
+def list_decoy_hosts() -> str:
+    """Mostra os hosts-isca de deception ativa atualmente no ar e se algum já
+    foi consumido pelo atacante."""
+    return deception.describe_deception()
+
+
+@tool
+def remove_decoy_host(decoy_id: str) -> str:
+    """Remove um host-isca de deception ativa pelo id."""
+    return deception.remove_decoy(decoy_id)
+
+
+@tool
+def generate_deception_map() -> str:
+    """Gera o documento de inventário FALSO (estilo /etc/hosts + notas
+    internas) descrevendo os hosts-isca — a 'informação falsa convincente'
+    para servir como arquivo-isca a quem já está no perímetro."""
+    return deception.generate_deception_map()
+
+
+@tool
+def check_deception_consumption() -> str:
+    """Verifica se algum atacante agiu sobre a rede falsa: cruza alertas de
+    DPI já capturados contra os IPs-isca. Um toque num decoy é ataque
+    confirmado (não há tráfego legítimo para um host que não existe)."""
+    return deception.describe_deception_consumption()
+
+
+@tool
 def list_forensics_plugins() -> str:
     """Lista os plugins mais comuns do Volatility3 (análise de memória)
     por categoria (windows/linux/mac), como referência antes de chamar
@@ -1466,6 +1509,11 @@ TOOLS = [
     remove_honeynet_segment,
     list_honeynet_segments,
     check_honeynet_violations,
+    deploy_decoy_host,
+    list_decoy_hosts,
+    remove_decoy_host,
+    generate_deception_map,
+    check_deception_consumption,
     list_forensics_plugins,
     run_memory_forensics,
     generate_filesystem_timeline,
