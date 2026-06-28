@@ -53,7 +53,7 @@ from tools import (
     watchdog,
     web_injection,
 )
-from tools import asset_inventory, brbos, client_baseline, client_risk, dns_monitor, infrastructure, ttp_profile
+from tools import asset_inventory, brbos, client_baseline, client_risk, dns_monitor, infrastructure, threshold_tuning, ttp_profile
 from tools import tool_fingerprint
 from tools import deception
 from tools import malware_sandbox
@@ -1434,6 +1434,51 @@ def rank_client_risk() -> str:
 
 
 @tool
+def record_alert_feedback(alert_type: str, scope: str, label: str, note: str = "") -> str:
+    """Rotula um alerta para a Nexus APRENDER e recalibrar os thresholds sozinha
+    (Fase 7, item 4). alert_type: 'client_anomaly' ou 'global_anomaly'. scope: o
+    client_id (ou 'global'). label: 'fp' (falso positivo — disparou e não era
+    ataque), 'tp' (verdadeiro positivo) ou 'missed' (era ataque e NÃO disparou).
+    Excesso de 'fp' faz a Nexus propor subir o z-score (menos sensível); excesso
+    de 'missed' faz propor baixar (mais sensível) — sempre dentro de limites de
+    segurança."""
+    return threshold_tuning.record_feedback(alert_type, scope, label, note=note)
+
+
+@tool
+def propose_threshold_tuning(alert_type: str, scope: str = "global") -> str:
+    """Mostra (SEM aplicar) o ajuste de threshold que a Nexus sugere a partir do
+    feedback acumulado de alertas, e por quê. Read-only: o operador decide se
+    aplica. alert_type 'client_anomaly'/'global_anomaly', scope é o client_id ou
+    'global'."""
+    return threshold_tuning.describe_tuning(alert_type, scope)
+
+
+@tool
+def apply_threshold_tuning(alert_type: str, scope: str = "global", confirm: bool = False) -> str:
+    """Aplica o ajuste de threshold sugerido — exige confirm=True (operador no
+    loop) ou o toggle ALLOW_THRESHOLD_AUTOTUNE. O valor é sempre limitado pelo
+    piso/teto de segurança: subir demais cega a detecção, então há um teto
+    rígido que nem o auto-ajuste ultrapassa. Sem confirmação, apenas devolve a
+    proposta."""
+    return threshold_tuning.apply_adjustment(alert_type, scope, confirm=confirm)
+
+
+@tool
+def reset_threshold_tuning(alert_type: str, scope: str = "global") -> str:
+    """Reverte o threshold aprendido de um alerta de volta ao valor base padrão,
+    descartando o ajuste automático."""
+    return threshold_tuning.reset_threshold(alert_type, scope)
+
+
+@tool
+def threshold_tuning_overview() -> str:
+    """Lista todos os thresholds que a Nexus já recalibrou automaticamente
+    (valor aprendido vs base, motivo e quando) — visão geral do auto-ajuste."""
+    return threshold_tuning.tuning_overview()
+
+
+@tool
 def register_dns_server(ip: str, hostname: str = "", description: str = "") -> str:
     """Cadastra um DNS server (resolver) da Xfiber para monitoramento contínuo
     de saúde, portas e certificado. Marca o IP como infraestrutura CRÍTICA
@@ -1666,6 +1711,11 @@ TOOLS = [
     list_all_client_baselines,
     client_risk_report,
     rank_client_risk,
+    record_alert_feedback,
+    propose_threshold_tuning,
+    apply_threshold_tuning,
+    reset_threshold_tuning,
+    threshold_tuning_overview,
     register_dns_server,
     unregister_dns_server,
     list_dns_servers,

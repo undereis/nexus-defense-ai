@@ -387,6 +387,34 @@ CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts BEGIN
     INSERT INTO memory_facts_fts(memory_facts_fts, rowid, content, slug, category) VALUES ('delete', old.id, old.content, old.slug, old.category);
     INSERT INTO memory_facts_fts(rowid, content, slug, category) VALUES (new.id, new.content, new.slug, new.category);
 END;
+
+-- Auto-ajuste de thresholds (Fase 7, item 4): rótulos do operador sobre os
+-- alertas (falso positivo / verdadeiro positivo / detecção perdida) — é a
+-- verdade-terreno a partir da qual a Nexus aprende a calibrar sozinha.
+CREATE TABLE IF NOT EXISTS alert_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_type TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    label TEXT NOT NULL,            -- 'fp' | 'tp' | 'missed'
+    z_score REAL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_alert_feedback_scope ON alert_feedback(alert_type, scope);
+
+-- Thresholds aprendidos por (alert_type, scope). Override BOUNDED do base: a
+-- detecção lê este valor (sempre re-clampado no piso/teto) em vez do default.
+CREATE TABLE IF NOT EXISTS tuned_thresholds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_type TEXT NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    threshold REAL NOT NULL,
+    base REAL NOT NULL,
+    samples_at_tune INTEGER NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(alert_type, scope)
+);
 """
 
 
@@ -823,6 +851,100 @@ def get_honeypot_hit_counts_by_ip():
         return conn.execute(
             "SELECT ip, COUNT(*) FROM honeypot_hits GROUP BY ip"
         ).fetchall()
+
+
+# --- Auto-ajuste de thresholds (Fase 7, item 4) ---
+
+def record_alert_feedback(alert_type: str, scope: str, label: str,
+                          z_score: float | None = None, note: str = ""):
+    """Persiste o rótulo do operador sobre um alerta (fp/tp/missed) — a
+    verdade-terreno do auto-ajuste de thresholds."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO alert_feedback (alert_type, scope, label, z_score, note) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (alert_type, scope, label, z_score, note),
+        )
+
+
+def get_alert_feedback_counts(alert_type: str, scope: str):
+    """Retorna [(label, count)] dos rótulos de um (alert_type, scope)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT label, COUNT(*) FROM alert_feedback "
+            "WHERE alert_type = ? AND scope = ? GROUP BY label",
+            (alert_type, scope),
+        ).fetchall()
+
+
+def list_alert_feedback(alert_type: str | None = None, scope: str | None = None,
+                        limit: int = 200):
+    """Lista feedbacks (mais recentes primeiro), filtráveis por tipo/escopo."""
+    q = ("SELECT alert_type, scope, label, z_score, note, created_at "
+         "FROM alert_feedback")
+    clauses, params = [], []
+    if alert_type is not None:
+        clauses.append("alert_type = ?")
+        params.append(alert_type)
+    if scope is not None:
+        clauses.append("scope = ?")
+        params.append(scope)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
+    q += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    with get_conn() as conn:
+        return conn.execute(q, params).fetchall()
+
+
+def upsert_tuned_threshold(alert_type: str, scope: str, threshold: float,
+                           base: float, samples_at_tune: int = 0, reason: str = ""):
+    """Grava/atualiza o threshold aprendido de um (alert_type, scope)."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO tuned_thresholds
+                (alert_type, scope, threshold, base, samples_at_tune, reason, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(alert_type, scope) DO UPDATE SET
+                threshold = excluded.threshold,
+                base = excluded.base,
+                samples_at_tune = excluded.samples_at_tune,
+                reason = excluded.reason,
+                updated_at = datetime('now')
+            """,
+            (alert_type, scope, threshold, base, samples_at_tune, reason),
+        )
+
+
+def get_tuned_threshold(alert_type: str, scope: str):
+    """Retorna (threshold, base, samples_at_tune, reason, updated_at) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT threshold, base, samples_at_tune, reason, updated_at "
+            "FROM tuned_thresholds WHERE alert_type = ? AND scope = ?",
+            (alert_type, scope),
+        ).fetchone()
+
+
+def list_tuned_thresholds():
+    """Lista todos os thresholds aprendidos."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT alert_type, scope, threshold, base, samples_at_tune, reason, updated_at "
+            "FROM tuned_thresholds ORDER BY alert_type, scope"
+        ).fetchall()
+
+
+def delete_tuned_threshold(alert_type: str, scope: str) -> bool:
+    """Remove o override de um (alert_type, scope), revertendo ao base. True
+    se algo foi removido."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM tuned_thresholds WHERE alert_type = ? AND scope = ?",
+            (alert_type, scope),
+        )
+        return cur.rowcount > 0
 
 
 def record_honeypot_credential(ip: str, port: int, service: str, username: str | None, password: str | None):

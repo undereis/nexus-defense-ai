@@ -31,6 +31,7 @@ from database.db import (
 )
 from tools.client_baseline import DEFAULT_Z_THRESHOLD
 from tools.threat_intel import reputation_score
+from tools.threshold_tuning import effective_threshold
 
 # Pesos da heurística de risco.
 _W_HONEYPOT_IP = 15      # cada IP distinto do cliente que tocou honeypot
@@ -128,7 +129,14 @@ def adjusted_z_threshold(client_id: str,
     """z-threshold de anomalia ajustado ao risco do cliente: quanto mais
     arriscado, mais sensível (menor). Cliente desconhecido ou de baixo risco
     usa o base. Nunca abaixo do piso de segurança. Esta é a porta pela qual o
-    'monitoramento mais agressivo automático' entra no monitor_loop."""
+    'monitoramento mais agressivo automático' entra no monitor_loop.
+
+    Composição com a Fase 7 item 4: o `base` é primeiro substituído pelo
+    threshold APRENDIDO do cliente (auto-ajuste por feedback de falsos
+    positivos, bounded), e só então o delta de risco do item 3 é aplicado por
+    cima. Sem feedback aprendido, o base default é usado (comportamento
+    original preservado)."""
+    base = effective_threshold("client_anomaly", client_id, base)
     risk = compute_client_risk(client_id)
     tier = risk["tier"] if risk else "baixo"
     return max(_Z_FLOOR, base - _Z_DELTA.get(tier, 0.0))
