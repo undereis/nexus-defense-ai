@@ -651,6 +651,21 @@ def list_honeypot_credentials_for_ip(ip: str, limit: int = 20):
         ).fetchall()
 
 
+def get_attacker_user_agents_for_ip(ip: str) -> list[str]:
+    """Retorna os User-Agents não-vazios que um IP já apresentou em disparos
+    de honeytoken — sinal para fingerprint da ferramenta do atacante
+    (tools/tool_fingerprint.py). honeypot_hits não guarda UA; honeytoken_triggers
+    sim, então esta é a fonte persistida de UA hoje."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_agent FROM honeytoken_triggers "
+            "WHERE source_ip = ? AND user_agent IS NOT NULL AND user_agent != '' "
+            "ORDER BY id DESC",
+            (ip,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+
 def add_knowledge_document(topic: str, title: str, source_url: str, content: str) -> int:
     """Adiciona um documento técnico à base de conhecimento local (full-text
     indexado via FTS5). Retorna o id do documento inserido."""
