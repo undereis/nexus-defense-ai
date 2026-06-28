@@ -211,3 +211,13 @@ PLAYBOOK_AUTO_LEVEL = int(os.getenv("PLAYBOOK_AUTO_LEVEL", "0"))
 # do mesmo provedor. Desativado por padrão; habilitar é deliberado.
 # Mesmo habilitado, SEMPRE passa pelo gate de confirmação (risk.py).
 ALLOW_ASN_BLOCK = os.getenv("ALLOW_ASN_BLOCK", "false").lower() == "true"
+
+# Intervalo em segundos para o loop de inventário automático de ativos.
+# Escaneia os blocos IP próprios registrados e detecta novos devices ou
+# mudanças de configuração. 3600 = a cada 1 hora. 0 = desativado.
+ASSET_INVENTORY_SCAN_INTERVAL = int(os.getenv("ASSET_INVENTORY_SCAN_INTERVAL", "3600"))
+
+# Modo de scan do inventário: 'passive' (só ping, descobre hosts ativos)
+# ou 'light' (ping + top 100 portas TCP, detecta serviços). 'passive' é
+# mais rápido e menos intrusivo; 'light' gera mais informação de auditoria.
+ASSET_INVENTORY_SCAN_MODE = os.getenv("ASSET_INVENTORY_SCAN_MODE", "passive")

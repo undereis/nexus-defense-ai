@@ -71,12 +71,20 @@ _manually_stopped: set[tuple[str, int]] = set()
 
 
 def _is_safe_to_isolate(ip: str) -> bool:
-    """Nunca isola loopback (127.0.0.0/8, ::1) — testar o próprio honeypot
-    da própria máquina não deve travar o acesso local a ela mesma."""
+    """Nunca isola loopback nem IPs críticos da própria infraestrutura.
+
+    Protege contra auto-bloqueio acidental de servidores e roteadores da
+    Xfiber caso eles apareçam no honeypot (ex: scan interno de auditoria)."""
     try:
-        return not ipaddress.ip_address(ip).is_loopback
+        addr = ipaddress.ip_address(ip)
     except ValueError:
         return False
+    if addr.is_loopback:
+        return False
+    from tools.infrastructure import is_critical_ip
+    if is_critical_ip(ip):
+        return False
+    return True
 
 
 def _isolate(ip: str, port: int, service: str):

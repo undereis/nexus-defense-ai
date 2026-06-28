@@ -208,6 +208,68 @@ CREATE TABLE IF NOT EXISTS asn_blocks (
     prefix_count INTEGER NOT NULL DEFAULT 0,
     blocked_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS infrastructure_ip_blocks (
+    cidr TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    is_critical INTEGER NOT NULL DEFAULT 0,
+    asn TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS infrastructure_asns (
+    asn TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS infrastructure_nodes (
+    name TEXT PRIMARY KEY,
+    node_type TEXT NOT NULL DEFAULT 'unknown',
+    ip_or_cidr TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS asset_inventory (
+    ip TEXT PRIMARY KEY,
+    hostname TEXT NOT NULL DEFAULT '',
+    open_ports_json TEXT NOT NULL DEFAULT '[]',
+    os_guess TEXT NOT NULL DEFAULT '',
+    first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+    status TEXT NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE IF NOT EXISTS asset_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL,
+    change_type TEXT NOT NULL,
+    old_value TEXT NOT NULL DEFAULT '',
+    new_value TEXT NOT NULL DEFAULT '',
+    detected_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_changes_ip ON asset_changes(ip);
+
+CREATE TABLE IF NOT EXISTS client_profiles (
+    client_id TEXT PRIMARY KEY,
+    cidr TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS client_traffic_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id TEXT NOT NULL,
+    hour_of_day INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,
+    total_connections INTEGER NOT NULL,
+    distinct_ips INTEGER NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_client_traffic_samples_slot ON client_traffic_samples(client_id, hour_of_day, day_of_week);
 """
 
 
@@ -989,3 +1051,190 @@ def get_asn_block(asn: str):
             "SELECT description, prefixes_json, blocked_at FROM asn_blocks WHERE asn = ?",
             (asn,),
         ).fetchone()
+
+
+# ---------- infrastructure map ----------
+
+def add_ip_block(cidr: str, description: str, is_critical: bool, asn: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO infrastructure_ip_blocks "
+            "(cidr, description, is_critical, asn) VALUES (?, ?, ?, ?)",
+            (cidr, description, int(is_critical), asn),
+        )
+
+
+def remove_ip_block(cidr: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM infrastructure_ip_blocks WHERE cidr = ?", (cidr,))
+
+
+def list_ip_blocks():
+    """Retorna (cidr, description, is_critical, asn, added_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT cidr, description, is_critical, asn, added_at "
+            "FROM infrastructure_ip_blocks ORDER BY added_at"
+        ).fetchall()
+
+
+def add_infrastructure_asn(asn: str, description: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO infrastructure_asns (asn, description) VALUES (?, ?)",
+            (asn, description),
+        )
+
+
+def remove_infrastructure_asn(asn: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM infrastructure_asns WHERE asn = ?", (asn,))
+
+
+def list_infrastructure_asns():
+    """Retorna (asn, description, added_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT asn, description, added_at FROM infrastructure_asns ORDER BY added_at"
+        ).fetchall()
+
+
+def add_topology_node(name: str, node_type: str, ip_or_cidr: str, description: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO infrastructure_nodes "
+            "(name, node_type, ip_or_cidr, description) VALUES (?, ?, ?, ?)",
+            (name, node_type, ip_or_cidr, description),
+        )
+
+
+def remove_topology_node(name: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM infrastructure_nodes WHERE name = ?", (name,))
+
+
+def list_topology_nodes():
+    """Retorna (name, node_type, ip_or_cidr, description, added_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT name, node_type, ip_or_cidr, description, added_at "
+            "FROM infrastructure_nodes ORDER BY node_type, name"
+        ).fetchall()
+
+
+# ---------- asset inventory ----------
+
+def upsert_asset(ip: str, hostname: str, open_ports_json: str,
+                  os_guess: str) -> tuple[bool, list]:
+    """Insere ou atualiza um ativo. Retorna (is_new, [(change_type, old, new)])."""
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT hostname, open_ports_json, os_guess FROM asset_inventory WHERE ip = ?",
+            (ip,),
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                "INSERT INTO asset_inventory (ip, hostname, open_ports_json, os_guess) "
+                "VALUES (?, ?, ?, ?)",
+                (ip, hostname, open_ports_json, os_guess),
+            )
+            return True, []
+        changes = []
+        old_hostname, old_ports_json, old_os = existing
+        if hostname and hostname != old_hostname:
+            changes.append(("hostname", old_hostname, hostname))
+        if open_ports_json != old_ports_json:
+            changes.append(("portas", old_ports_json, open_ports_json))
+        if os_guess and os_guess != old_os:
+            changes.append(("os_guess", old_os, os_guess))
+        conn.execute(
+            "UPDATE asset_inventory SET hostname = ?, open_ports_json = ?, "
+            "os_guess = ?, last_seen = datetime('now') WHERE ip = ?",
+            (hostname or old_hostname, open_ports_json, os_guess or old_os, ip),
+        )
+        return False, changes
+
+
+def list_assets():
+    """Retorna (ip, hostname, open_ports_json, os_guess, first_seen, last_seen, status)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, hostname, open_ports_json, os_guess, first_seen, last_seen, status "
+            "FROM asset_inventory ORDER BY ip"
+        ).fetchall()
+
+
+def record_asset_change(ip: str, change_type: str, old_value: str, new_value: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO asset_changes (ip, change_type, old_value, new_value) "
+            "VALUES (?, ?, ?, ?)",
+            (ip, change_type, old_value, new_value),
+        )
+
+
+def list_asset_changes(limit: int = 50):
+    """Retorna (ip, change_type, old_value, new_value, detected_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, change_type, old_value, new_value, detected_at "
+            "FROM asset_changes ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+# ---------- client baselines ----------
+
+def add_client_profile(client_id: str, cidr: str, description: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO client_profiles (client_id, cidr, description) "
+            "VALUES (?, ?, ?)",
+            (client_id, cidr, description),
+        )
+
+
+def remove_client_profile(client_id: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM client_profiles WHERE client_id = ?", (client_id,))
+
+
+def list_client_profiles():
+    """Retorna (client_id, cidr, description, added_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT client_id, cidr, description, added_at "
+            "FROM client_profiles ORDER BY client_id"
+        ).fetchall()
+
+
+def get_client_profile(client_id: str):
+    """Retorna (client_id, cidr, description, added_at) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT client_id, cidr, description, added_at "
+            "FROM client_profiles WHERE client_id = ?",
+            (client_id,),
+        ).fetchone()
+
+
+def record_client_traffic_sample(client_id: str, hour_of_day: int, day_of_week: int,
+                                   total_connections: int, distinct_ips: int):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO client_traffic_samples "
+            "(client_id, hour_of_day, day_of_week, total_connections, distinct_ips) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (client_id, hour_of_day, day_of_week, total_connections, distinct_ips),
+        )
+
+
+def get_client_traffic_samples_for_slot(client_id: str, hour_of_day: int, day_of_week: int):
+    """Retorna lista de (total_connections, distinct_ips) para o slot horário dado."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT total_connections, distinct_ips FROM client_traffic_samples "
+            "WHERE client_id = ? AND hour_of_day = ? AND day_of_week = ? "
+            "ORDER BY id DESC LIMIT 200",
+            (client_id, hour_of_day, day_of_week),
+        ).fetchall()
