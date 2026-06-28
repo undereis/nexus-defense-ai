@@ -816,6 +816,15 @@ def count_honeypot_hits(ip: str) -> int:
         return row[0] if row else 0
 
 
+def get_honeypot_hit_counts_by_ip():
+    """Retorna (ip, total_hits) agrupado por IP — para agregar atividade de
+    honeypot por bloco de cliente (modelo de risco por cliente, Fase 7)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, COUNT(*) FROM honeypot_hits GROUP BY ip"
+        ).fetchall()
+
+
 def record_honeypot_credential(ip: str, port: int, service: str, username: str | None, password: str | None):
     """Registra usuário/senha que um atacante digitou de verdade no
     honeypot — inteligência muito mais rica que só saber que ele

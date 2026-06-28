@@ -39,7 +39,7 @@ from database.db import (
     log_event,
     record_threat_flag,
 )
-from tools import firewall, honeypot
+from tools import client_risk, firewall, honeypot
 from tools.anomaly import record_current_sample
 from tools.asset_inventory import scan_network as _inventory_scan
 from tools.client_baseline import check_all_client_anomalies, record_all_client_samples
@@ -88,8 +88,12 @@ def monitor_loop(stop_event: threading.Event):
             record_all_client_samples(counts)
 
             # Anomalia por cliente: detecta desvio específico de um cliente
-            # antes que ele afete o volume global.
-            client_anomalies = check_all_client_anomalies(counts)
+            # antes que ele afete o volume global. O threshold é ajustado ao
+            # risco de cada cliente (Fase 7, item 3): cliente arriscado é
+            # monitorado de forma mais agressiva automaticamente.
+            client_anomalies = check_all_client_anomalies(
+                counts, z_threshold_fn=client_risk.adjusted_z_threshold
+            )
             for ca in client_anomalies:
                 log_event(
                     "client_anomaly_detected",

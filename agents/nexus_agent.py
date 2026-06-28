@@ -53,7 +53,7 @@ from tools import (
     watchdog,
     web_injection,
 )
-from tools import asset_inventory, brbos, client_baseline, dns_monitor, infrastructure, ttp_profile
+from tools import asset_inventory, brbos, client_baseline, client_risk, dns_monitor, infrastructure, ttp_profile
 from tools import tool_fingerprint
 from tools import deception
 from tools import malware_sandbox
@@ -1416,6 +1416,24 @@ def list_all_client_baselines() -> str:
 
 
 @tool
+def client_risk_report(client_id: str) -> str:
+    """Modelo de risco por cliente: calcula o score/tier (baixo/médio/alto) de
+    um cliente a partir do histórico de comportamento suspeito do seu bloco
+    (reputação dos IPs, atividade de honeypot, IPs bloqueados) e mostra o
+    z-threshold de anomalia ajustado — clientes arriscados são monitorados de
+    forma mais agressiva automaticamente."""
+    return client_risk.describe_client_risk(client_id)
+
+
+@tool
+def rank_client_risk() -> str:
+    """Ranqueia todos os clientes cadastrados por score de risco (do maior para
+    o menor) — para ver de relance quais blocos de cliente mais geram tráfego
+    suspeito e merecem atenção/monitoramento mais agressivo."""
+    return client_risk.rank_clients_by_risk()
+
+
+@tool
 def register_dns_server(ip: str, hostname: str = "", description: str = "") -> str:
     """Cadastra um DNS server (resolver) da Xfiber para monitoramento contínuo
     de saúde, portas e certificado. Marca o IP como infraestrutura CRÍTICA
@@ -1646,6 +1664,8 @@ TOOLS = [
     list_client_profiles,
     check_client_anomaly_status,
     list_all_client_baselines,
+    client_risk_report,
+    rank_client_risk,
     register_dns_server,
     unregister_dns_server,
     list_dns_servers,
