@@ -20,6 +20,9 @@ from config import (
     AUDIT_CHECKPOINT_INTERVAL,
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
+    DNS_MONITOR_INTERVAL,
+    DNS_PROBE_DOMAIN,
+    DNS_SERVERS,
     HONEYPOT_ENABLED,
     HONEYPOT_SERVICES,
     MONITOR_POLL_INTERVAL,
@@ -40,6 +43,11 @@ from tools import firewall, honeypot
 from tools.anomaly import record_current_sample
 from tools.asset_inventory import scan_network as _inventory_scan
 from tools.client_baseline import check_all_client_anomalies, record_all_client_samples
+from tools.dns_monitor import (
+    check_all_dns_health,
+    has_problems as _dns_has_problems,
+    register_dns_server,
+)
 from tools.audit import create_checkpoint
 from tools.notify import send_notification
 from tools.policy import classify_threats
@@ -278,6 +286,31 @@ def asset_inventory_loop(stop_event: threading.Event):
         stop_event.wait(ASSET_INVENTORY_SCAN_INTERVAL)
 
 
+def dns_monitor_loop(stop_event: threading.Event):
+    """Health check periódico dos DNS servers (resposta, portas, certificado).
+    Só roda se DNS_MONITOR_INTERVAL > 0. Cadastra DNS_SERVERS no primeiro ciclo."""
+    if DNS_MONITOR_INTERVAL <= 0:
+        return
+    for ip in (s.strip() for s in DNS_SERVERS.split(",")):
+        if ip:
+            try:
+                register_dns_server(ip, description="auto-cadastrado via DNS_SERVERS")
+            except Exception as exc:
+                log_event("dns_register_error", ip, str(exc))
+    while not stop_event.is_set():
+        try:
+            report = check_all_dns_health(DNS_PROBE_DOMAIN)
+            if _dns_has_problems(report):
+                _announce(f"DNS: problema(s) detectado(s)\n{report}")
+                send_notification("Nexus: problema em DNS server", report)
+                log_event("dns_health_problem", None, report[:500], action_taken="notificado")
+            else:
+                log_event("dns_health_ok", None, report[:200])
+        except Exception as exc:
+            log_event("dns_health_error", None, str(exc))
+        stop_event.wait(DNS_MONITOR_INTERVAL)
+
+
 def risk_sweep_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
@@ -345,6 +378,10 @@ def main():
         target=asset_inventory_loop, args=(stop_event,), daemon=True
     )
     asset_inventory_thread.start()
+    dns_monitor_thread = threading.Thread(
+        target=dns_monitor_loop, args=(stop_event,), daemon=True
+    )
+    dns_monitor_thread.start()
 
     try:
         while True:

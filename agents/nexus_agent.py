@@ -53,7 +53,7 @@ from tools import (
     watchdog,
     web_injection,
 )
-from tools import asset_inventory, client_baseline, infrastructure
+from tools import asset_inventory, client_baseline, dns_monitor, infrastructure
 from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
@@ -1240,6 +1240,52 @@ def list_all_client_baselines() -> str:
     return client_baseline.describe_all_client_baselines()
 
 
+@tool
+def register_dns_server(ip: str, hostname: str = "", description: str = "") -> str:
+    """Cadastra um DNS server (resolver) da Xfiber para monitoramento contínuo
+    de saúde, portas e certificado. Marca o IP como infraestrutura CRÍTICA
+    automaticamente, então a Nexus nunca auto-bloqueia o próprio resolver.
+    Exemplo: register_dns_server('192.168.0.90', 'dns1', 'Resolver primário')."""
+    return dns_monitor.register_dns_server(ip, hostname, description)
+
+
+@tool
+def unregister_dns_server(ip: str) -> str:
+    """Remove um DNS server do monitoramento. Não remove a proteção crítica
+    do IP (isso exige unregister_own_ip_block, deliberadamente)."""
+    return dns_monitor.unregister_dns_server(ip)
+
+
+@tool
+def list_dns_servers() -> str:
+    """Lista os DNS servers (resolvers) cadastrados para monitoramento."""
+    return dns_monitor.list_dns_servers()
+
+
+@tool
+def check_dns_health(server_ip: str) -> str:
+    """Verifica AGORA um DNS server: resolve um domínio de prova e mede latência
+    (health), audita quais portas estão abertas (53/853/443 ok; telnet, RDP,
+    MySQL etc. são red flags) e checa a validade do certificado DoT/DoH.
+    Use quando suspeitar que um resolver caiu, está lento ou foi comprometido."""
+    return dns_monitor.check_dns_health(server_ip)
+
+
+@tool
+def check_all_dns_health() -> str:
+    """Verifica TODOS os DNS servers cadastrados de uma vez (health check +
+    auditoria de portas + validade de certificado). Relatório agregado."""
+    return dns_monitor.check_all_dns_health()
+
+
+@tool
+def dns_health_history(server_ip: str = "", limit: int = 20) -> str:
+    """Mostra o histórico recente de verificações de saúde dos DNS servers
+    (resposta, latência, certificado, problemas detectados). Passe server_ip
+    para filtrar por um resolver específico, ou vazio para todos."""
+    return dns_monitor.describe_dns_health_history(server_ip or None, limit)
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -1359,6 +1405,12 @@ TOOLS = [
     list_client_profiles,
     check_client_anomaly_status,
     list_all_client_baselines,
+    register_dns_server,
+    unregister_dns_server,
+    list_dns_servers,
+    check_dns_health,
+    check_all_dns_health,
+    dns_health_history,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
@@ -1535,6 +1587,13 @@ Sua missão:
     check_client_anomaly_status detecta DDoS direcionado a UM cliente antes
     que afete os outros — é mais preciso que a detecção global por volume.
     Quando {CREATOR_NAME} mencionar um cliente da Xfiber, ofereça cadastrá-lo.
+26. Os DNS servers da Xfiber (resolvers .90, .91, .92) são monitorados por
+    register_dns_server / check_dns_health / check_all_dns_health: cada check
+    resolve um domínio de prova (saúde + latência), audita portas abertas
+    (53/853/443 são esperadas; telnet, RDP, MySQL abertos num resolver são
+    indício de comprometimento) e verifica a validade do certificado DoT/DoH.
+    Cadastrar um resolver o marca como CRÍTICO (nunca auto-bloqueado). Quando
+    {CREATOR_NAME} citar os DNS servers, cadastre-os e rode um check inicial.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
