@@ -67,7 +67,7 @@ interativa ou API REST.
 
 ## Onde está o quê
 
-- **Agente LangGraph:** `agents/nexus_agent.py` (137 tools registradas)
+- **Agente LangGraph:** `agents/nexus_agent.py` (142 tools registradas)
 - **Engine de playbooks:** `tools/playbook.py`
 - **Gate de confirmação:** `tools/risk.py`
 - **Firewall abstrato:** `tools/firewall.py` → backends em `tools/firewall_backends/`
@@ -76,7 +76,7 @@ interativa ou API REST.
 - **Mapa de infraestrutura própria:** `tools/infrastructure.py` (IPs críticos nunca auto-bloqueados)
 - **Conhecimento da rede (Fase 5):** `tools/asset_inventory.py` · `tools/client_baseline.py` · `tools/dns_monitor.py`
 - **DNS por dentro (BrbOS):** `tools/brbos.py` (API REST do resolver: stats + RPZ block/unblock + rate limit; escrita gated)
-- **Contra-inteligência (Fase 6):** `tools/ttp_profile.py` (perfil de grupo por TTPs: clustering determinístico de atacantes por comportamento/ASN/técnica) · `tools/tool_fingerprint.py` (fingerprint da ferramenta do atacante: User-Agent/credenciais/comportamento → sqlmap/Nmap/Mirai/etc., por assinatura). Ambos read-only.
-- **Testes:** `tests/` (58 arquivos, ~584 passando; 14 falham só no sandbox: socket/ping/recon)
+- **Contra-inteligência (Fase 6):** `tools/ttp_profile.py` (perfil de grupo por TTPs: clustering determinístico de atacantes por comportamento/ASN/técnica) · `tools/tool_fingerprint.py` (fingerprint da ferramenta do atacante: User-Agent/credenciais/comportamento → sqlmap/Nmap/Mirai/etc., por assinatura) · `tools/deception.py` (deception ativa: hosts-isca com banners falsos no espaço morto de honeynet + mapa falso + detecção de consumo; gate `_is_safe_decoy_ip` recusa infra real, só vive em honeynet declarada; defensivo, sem hack-back). Read-only/registro-local.
+- **Testes:** `tests/` (59 arquivos, ~605 passando; 14 falham só no sandbox: socket/ping/recon)
 - **Base de conhecimento:** `workdir/apostilas/` (16 apostilas ingeridas via RAG)
 - **Docs detalhadas:** `/docs/` (ler só quando a tarefa exigir)
