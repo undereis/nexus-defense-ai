@@ -141,9 +141,16 @@ def check_client_anomaly(client_id: str, total_connections: int,
 
 
 def check_all_client_anomalies(counts: dict[str, int],
-                                 now: datetime | None = None) -> list[dict]:
+                                 now: datetime | None = None,
+                                 z_threshold_fn=None) -> list[dict]:
     """Verifica anomalias para TODOS os clientes com base nas contagens atuais.
-    Retorna lista de resultados onde is_anomaly=True."""
+    Retorna lista de resultados onde is_anomaly=True.
+
+    z_threshold_fn opcional: callable(client_id) -> float. Quando fornecido, o
+    threshold de cada cliente é resolvido por ela — é o gancho pelo qual o
+    modelo de risco por cliente (tools/client_risk) deixa a detecção mais
+    agressiva para clientes arriscados. Sem ela, usa o DEFAULT_Z_THRESHOLD
+    (comportamento original preservado)."""
     now = now or datetime.now(timezone.utc)
     client_totals: dict[str, int] = {}
     for ip, conn_count in counts.items():
@@ -152,7 +159,8 @@ def check_all_client_anomalies(counts: dict[str, int],
             client_totals[cid] = client_totals.get(cid, 0) + conn_count
     anomalies = []
     for cid, total in client_totals.items():
-        result = check_client_anomaly(cid, total, now)
+        z = z_threshold_fn(cid) if z_threshold_fn else DEFAULT_Z_THRESHOLD
+        result = check_client_anomaly(cid, total, now, z_threshold=z)
         if result.get("is_anomaly"):
             anomalies.append(result)
     return anomalies
