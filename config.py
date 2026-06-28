@@ -198,3 +198,16 @@ MIKROTIK_USE_TLS = os.getenv("MIKROTIK_USE_TLS", "false").lower() == "true"
 # rejeitar) pode travar a thread chamando a tool por minutos, em vez de
 # falhar rápido com uma mensagem clara.
 MIKROTIK_TIMEOUT_SECONDS = int(os.getenv("MIKROTIK_TIMEOUT_SECONDS", "10"))
+
+# Nível máximo que os playbooks executam AUTOMATICAMENTE, sem confirmação
+# humana. 0 = desativado (só avalia e sugere, nunca age); 1 = só throttle;
+# 2 = throttle + isolamento local; 4 = inclui reporte global (AbuseIPDB).
+# NOTA CRÍTICA: Nível 3 (BGP FlowSpec) NUNCA executa automaticamente —
+# esta barreira é programática e não pode ser contornada por esta config.
+PLAYBOOK_AUTO_LEVEL = int(os.getenv("PLAYBOOK_AUTO_LEVEL", "0"))
+
+# Habilita o bloqueio de ASN inteiro (todos os prefixos IP de uma
+# organização). Blast radius altíssimo — pode bloquear tráfego legítimo
+# do mesmo provedor. Desativado por padrão; habilitar é deliberado.
+# Mesmo habilitado, SEMPRE passa pelo gate de confirmação (risk.py).
+ALLOW_ASN_BLOCK = os.getenv("ALLOW_ASN_BLOCK", "false").lower() == "true"

@@ -13,8 +13,20 @@ from config import PF_ANCHOR_NAME
 ANCHOR_FILE = f"/etc/pf.anchors/{PF_ANCHOR_NAME}"
 PF_CONF = "/etc/pf.conf"
 TABLE_NAME = "nexus_blocklist"
+RATE_TABLE_NAME = "nexus_ratelist"
 
-ANCHOR_RULES = f"table <{TABLE_NAME}> persist\nblock drop quick from <{TABLE_NAME}> to any\n"
+# Rate limit: IPs em nexus_ratelist podem ter no máximo 20 novas conexões
+# em 5 segundos. Se excederem, são promovidos AUTOMATICAMENTE para
+# nexus_blocklist (overload) e todo o estado é flushado. Isso significa
+# que rate limiting + auto-escalada para bloqueio total são tratados pelo
+# pf kernel — sem polling, sem decisão adicional do agente.
+ANCHOR_RULES = (
+    f"table <{TABLE_NAME}> persist\n"
+    f"table <{RATE_TABLE_NAME}> persist\n"
+    f"pass in quick from <{RATE_TABLE_NAME}> keep state "
+    f"(max-src-conn-rate 20/5, overload <{TABLE_NAME}> flush global)\n"
+    f"block drop quick from <{TABLE_NAME}> to any\n"
+)
 PF_CONF_BLOCK = f'\nanchor "{PF_ANCHOR_NAME}"\nload anchor "{PF_ANCHOR_NAME}" from "{ANCHOR_FILE}"\n'
 
 
@@ -70,5 +82,28 @@ def list_raw() -> subprocess.CompletedProcess:
 
 
 def parse_ips(stdout: str) -> list[str]:
-    """Cada linha do `pfctl -T show` é só o IP, com espaços ao redor."""
+    """Cada linha do `pfctl -T show` é só o IP/CIDR, com espaços ao redor."""
     return [line.strip() for line in stdout.splitlines() if line.strip()]
+
+
+def rate_limit(ip: str) -> subprocess.CompletedProcess:
+    """Adiciona IP à tabela de rate limiting. Se exceder 20 conn/5s, pf
+    promove automaticamente para nexus_blocklist (overload)."""
+    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", RATE_TABLE_NAME, "-T", "add", ip])
+
+
+def unrate_limit(ip: str) -> subprocess.CompletedProcess:
+    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", RATE_TABLE_NAME, "-T", "delete", ip])
+
+
+def list_rate_limited_raw() -> subprocess.CompletedProcess:
+    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", RATE_TABLE_NAME, "-T", "show"])
+
+
+def block_cidr(cidr: str) -> subprocess.CompletedProcess:
+    """pf tables aceitam CIDR diretamente — usa a mesma tabela de bloqueio."""
+    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "add", cidr])
+
+
+def unblock_cidr(cidr: str) -> subprocess.CompletedProcess:
+    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "delete", cidr])

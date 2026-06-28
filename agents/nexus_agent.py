@@ -18,6 +18,7 @@ from database.db import (
 from tools import (
     access,
     anomaly,
+    asn_block,
     audit,
     cracking,
     dossier,
@@ -38,6 +39,7 @@ from tools import (
     mikrotik,
     mitre_attack,
     notify,
+    playbook,
     privesc,
     proactive,
     recon,
@@ -77,6 +79,7 @@ from tools import bgp_flowspec
 
 risk_gate.register_action("bgp_flowspec_announce", bgp_flowspec.announce_flowspec_rule)
 risk_gate.register_action("bgp_flowspec_withdraw", bgp_flowspec.withdraw_flowspec_rule)
+risk_gate.register_action("asn_block_execute", asn_block._execute_block)
 
 
 @tool
@@ -1055,6 +1058,84 @@ def cancel_pending_action(action_id: int) -> str:
     return risk_gate.cancel(action_id)
 
 
+@tool
+def evaluate_threat_playbook(ip: str, attack_type: str) -> str:
+    """Avalia a ameaça de um IP e executa a resposta proporcional conforme
+    o playbook configurado para o tipo de ataque. Tipos suportados:
+    port_scan, brute_force, honeypot_trap, honeynet_violation,
+    honeytoken_trigger, ddos_volumetric, web_attack, recon_confirmed.
+    O nível executado automaticamente depende de PLAYBOOK_AUTO_LEVEL no
+    .env (padrão 0 = só avalia e sugere, nunca age). Nível 3 (BGP
+    FlowSpec) NUNCA executa automaticamente — sempre requer gate."""
+    return playbook.evaluate_and_respond(ip, attack_type)
+
+
+@tool
+def list_response_playbooks() -> str:
+    """Lista todos os playbooks de resposta configurados, com o nível de
+    resposta base de cada tipo de ataque e o nível de autonomia atual
+    (PLAYBOOK_AUTO_LEVEL)."""
+    return playbook.list_playbooks()
+
+
+@tool
+def playbook_history(ip: str = "") -> str:
+    """Lista os playbooks executados recentemente. Se ip for informado,
+    filtra apenas os registros desse IP. Mostra o nível de resposta
+    atingido e as ações tomadas em cada execução."""
+    return playbook.describe_playbook_history(ip or None)
+
+
+@tool
+def throttle_ip(ip: str, reason: str = "") -> str:
+    """Aplica rate limiting a um IP sem bloqueio total — nivel 1 de
+    resposta (throttle). Usa pfctl (max-src-conn-rate com auto-promoção
+    para blocklist se exceder) no macOS, hashlimit no Linux. Reversível:
+    use release_ip_throttle para remover."""
+    return firewall.rate_limit_ip(ip, reason)
+
+
+@tool
+def release_ip_throttle(ip: str) -> str:
+    """Remove o rate limiting de um IP (não é desbloqueio completo — só
+    remove o throttle aplicado por throttle_ip ou pelo playbook nível 1).
+    Para desbloquear completamente, use release_ip."""
+    return firewall.unrate_limit_ip(ip)
+
+
+@tool
+def list_throttled_ips() -> str:
+    """Lista todos os IPs em rate limiting atualmente."""
+    return firewall.list_rate_limited()
+
+
+@tool
+def propose_asn_block(asn: str, description: str = "") -> str:
+    """Propõe bloquear TODOS os prefixos IP de um ASN inteiro (ex: 'AS15169'
+    ou '15169' para o Google). Ação de blast radius MUITO ALTO — pode
+    bloquear tráfego legítimo de qualquer cliente do mesmo provedor. Só
+    disponível se ALLOW_ASN_BLOCK=true no .env. SEMPRE passa pelo gate de
+    confirmação (código fora de banda obrigatório) — nunca executa na
+    hora. Use description para documentar o motivo (ex: 'fonte de ataque
+    recorrente, 47 IPs isolados nos últimos 30 dias')."""
+    return asn_block.request_asn_block(asn, description)
+
+
+@tool
+def release_asn_block(asn: str) -> str:
+    """Remove o bloqueio de um ASN previamente bloqueado, desfazendo todos
+    os CIDRs adicionados ao firewall. Use list_blocked_asns para ver quais
+    ASNs estão atualmente bloqueados."""
+    return asn_block.unblock_asn(asn)
+
+
+@tool
+def list_blocked_asns() -> str:
+    """Lista os ASNs com bloqueio ativo e quantos prefixos de IP foram
+    bloqueados em cada um."""
+    return asn_block.list_blocked_asns()
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -1152,6 +1233,15 @@ TOOLS = [
     propose_bgp_flowspec_block,
     propose_bgp_flowspec_withdraw,
     list_bgp_flowspec_rules,
+    evaluate_threat_playbook,
+    list_response_playbooks,
+    playbook_history,
+    throttle_ip,
+    release_ip_throttle,
+    list_throttled_ips,
+    propose_asn_block,
+    release_asn_block,
+    list_blocked_asns,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
