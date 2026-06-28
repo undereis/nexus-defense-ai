@@ -56,6 +56,7 @@ from tools import (
 from tools import asset_inventory, brbos, client_baseline, dns_monitor, infrastructure, ttp_profile
 from tools import tool_fingerprint
 from tools import deception
+from tools import malware_sandbox
 from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
@@ -907,6 +908,53 @@ def check_deception_consumption() -> str:
 
 
 @tool
+def submit_malware_sample(filename: str) -> str:
+    """Sandbox de malware: submete uma amostra (dentro de workdir/) à análise
+    ESTÁTICA — calcula hashes, identifica o tipo real do arquivo e extrai IOCs
+    embutidos (URLs/IPs/domínios de C2). NÃO executa o arquivo. Registra um
+    dossiê. Use describe_malware_sample(sha256) para ver o resultado completo."""
+    return malware_sandbox.submit_sample(filename)
+
+
+@tool
+def describe_malware_sample(sha256: str) -> str:
+    """Mostra o dossiê completo de uma amostra já submetida à sandbox: hashes,
+    tipo, tamanho, se foi detonada e todos os IOCs extraídos."""
+    return malware_sandbox.describe_sample(sha256)
+
+
+@tool
+def list_malware_samples() -> str:
+    """Lista todas as amostras de malware já submetidas à sandbox."""
+    return malware_sandbox.list_samples()
+
+
+@tool
+def correlate_malware_iocs(sha256: str) -> str:
+    """Cruza os IPs-IOC de uma amostra contra a memória de atacantes da rede —
+    um C2 que já bateu aqui antes é prioridade máxima."""
+    return malware_sandbox.correlate_sample_iocs(sha256)
+
+
+@tool
+def malware_sandbox_status() -> str:
+    """Mostra o estado do gate de detonação dinâmica da sandbox: se a análise
+    estática está disponível (sempre), e por que a detonação real está (ou não)
+    permitida — travas ALLOW_MALWARE_DETONATION + LAB_TOKEN + backend."""
+    return malware_sandbox.sandbox_status()
+
+
+@tool
+def detonate_malware_sample(filename: str) -> str:
+    """Detonação DINÂMICA de uma amostra (executar e observar comportamento/C2).
+    PERIGOSO: só roda em laboratório isolado. Passa por gate duplo
+    (ALLOW_MALWARE_DETONATION + MALWARE_SANDBOX_LAB_TOKEN); se faltar qualquer
+    trava, RECUSA sem tocar no arquivo. Nesta versão não há backend de
+    detonação wirado — nenhuma amostra é executada em hipótese alguma."""
+    return malware_sandbox.detonate_sample(filename)
+
+
+@tool
 def list_forensics_plugins() -> str:
     """Lista os plugins mais comuns do Volatility3 (análise de memória)
     por categoria (windows/linux/mac), como referência antes de chamar
@@ -1514,6 +1562,12 @@ TOOLS = [
     remove_decoy_host,
     generate_deception_map,
     check_deception_consumption,
+    submit_malware_sample,
+    describe_malware_sample,
+    list_malware_samples,
+    correlate_malware_iocs,
+    malware_sandbox_status,
+    detonate_malware_sample,
     list_forensics_plugins,
     run_memory_forensics,
     generate_filesystem_timeline,
