@@ -264,3 +264,24 @@ ALLOW_BRBOS_BLOCK = os.getenv("ALLOW_BRBOS_BLOCK", "false").lower() == "true"
 # vírgula, ex.: "xfiber.com.br,xfiber.local". Defesa em profundidade além do
 # gate de confirmação — fortemente recomendado preencher.
 BRBOS_PROTECTED_DOMAINS = os.getenv("BRBOS_PROTECTED_DOMAINS", "")
+
+# --- Sandbox de malware (Fase 6, item 1) ---
+# Detonação DINÂMICA de amostra é o que há de mais perigoso no projeto: roda
+# código malicioso de verdade. Por isso vem com DUAS travas independentes,
+# ambas obrigatórias, e o código se RECUSA a detonar se qualquer uma faltar:
+#
+#   1. ALLOW_MALWARE_DETONATION=true  — liga a capacidade (off por padrão).
+#   2. MALWARE_SANDBOX_LAB_TOKEN=<algo> — prova de que o ambiente é um lab
+#      isolado e descartável (host sacrificial com snapshot + egress
+#      controlado). Em produção/dev este valor fica VAZIO e a detonação é
+#      recusada — nunca detonar fora de lab (mesma regra do incidente do DNS).
+#
+# A análise ESTÁTICA e a extração de IOC não dependem destes toggles (não
+# executam nada). Só a detonação dinâmica é gated.
+ALLOW_MALWARE_DETONATION = os.getenv("ALLOW_MALWARE_DETONATION", "false").lower() == "true"
+MALWARE_SANDBOX_LAB_TOKEN = os.getenv("MALWARE_SANDBOX_LAB_TOKEN", "")
+# Backend de detonação (ex.: "cape" para CAPEv2). Vazio = nenhum wirado ainda
+# (fase 2, exige lab). Mesmo com os dois toggles acima, sem backend a
+# detonação retorna "nenhum backend configurado" em vez de rodar algo.
+MALWARE_SANDBOX_BACKEND = os.getenv("MALWARE_SANDBOX_BACKEND", "")
+MALWARE_SANDBOX_TIMEOUT_SECONDS = int(os.getenv("MALWARE_SANDBOX_TIMEOUT_SECONDS", "120"))

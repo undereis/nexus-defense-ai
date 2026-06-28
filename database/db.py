@@ -184,6 +184,32 @@ CREATE TABLE IF NOT EXISTS decoy_assets (
     last_consumed_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS malware_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256 TEXT NOT NULL UNIQUE,
+    filename TEXT NOT NULL,
+    md5 TEXT,
+    sha1 TEXT,
+    size INTEGER,
+    file_type TEXT,
+    submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    detonated INTEGER NOT NULL DEFAULT 0,
+    detonated_at TEXT,
+    verdict TEXT
+);
+
+CREATE TABLE IF NOT EXISTS malware_iocs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256 TEXT NOT NULL,
+    ioc_type TEXT NOT NULL,
+    value TEXT NOT NULL,
+    source TEXT NOT NULL,
+    extracted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(sha256, ioc_type, value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_malware_iocs_sha ON malware_iocs(sha256);
+
 CREATE TABLE IF NOT EXISTS pending_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tool_name TEXT NOT NULL,
@@ -1078,6 +1104,74 @@ def record_decoy_consumption(ip: str) -> bool:
             (ip,),
         )
         return cur.rowcount > 0
+
+
+# ---------- sandbox de malware (amostras + IOCs) ----------
+
+def add_malware_sample(sha256: str, filename: str, md5: str, sha1: str,
+                       size: int, file_type: str):
+    """Registra (ou atualiza metadados de) uma amostra submetida à sandbox.
+    Chave é o sha256 — reenviar o mesmo arquivo não duplica."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO malware_samples (sha256, filename, md5, sha1, size, file_type) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(sha256) DO UPDATE SET filename = excluded.filename, "
+            "md5 = excluded.md5, sha1 = excluded.sha1, size = excluded.size, "
+            "file_type = excluded.file_type",
+            (sha256, filename, md5, sha1, size, file_type),
+        )
+
+
+def get_malware_sample(sha256: str):
+    """Retorna (sha256, filename, md5, sha1, size, file_type, submitted_at,
+    detonated, detonated_at, verdict) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT sha256, filename, md5, sha1, size, file_type, submitted_at, "
+            "detonated, detonated_at, verdict FROM malware_samples WHERE sha256 = ?",
+            (sha256,),
+        ).fetchone()
+
+
+def list_malware_samples():
+    """Retorna (sha256, filename, file_type, submitted_at, detonated, verdict)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT sha256, filename, file_type, submitted_at, detonated, verdict "
+            "FROM malware_samples ORDER BY submitted_at DESC"
+        ).fetchall()
+
+
+def mark_sample_detonated(sha256: str, verdict: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE malware_samples SET detonated = 1, detonated_at = datetime('now'), "
+            "verdict = ? WHERE sha256 = ?",
+            (verdict, sha256),
+        )
+        return cur.rowcount > 0
+
+
+def add_malware_ioc(sha256: str, ioc_type: str, value: str, source: str):
+    """Adiciona um IOC extraído de uma amostra. Ignora duplicata
+    (mesma amostra + tipo + valor)."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO malware_iocs (sha256, ioc_type, value, source) "
+            "VALUES (?, ?, ?, ?)",
+            (sha256, ioc_type, value, source),
+        )
+
+
+def list_malware_iocs(sha256: str):
+    """Retorna (ioc_type, value, source) de uma amostra."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ioc_type, value, source FROM malware_iocs WHERE sha256 = ? "
+            "ORDER BY ioc_type, value",
+            (sha256,),
+        ).fetchall()
 
 
 # ---------- rate limiting ----------
