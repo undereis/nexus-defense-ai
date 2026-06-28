@@ -16,7 +16,14 @@ manualmente (ver aviso no módulo do backend).
 import ipaddress
 import platform
 
-from database.db import log_event, record_blocked_ip, remove_blocked_ip
+from database.db import (
+    log_event,
+    list_rate_limited_ips,
+    record_blocked_ip,
+    record_rate_limited,
+    remove_blocked_ip,
+    remove_rate_limited,
+)
 
 _SYSTEM = platform.system()
 
@@ -39,6 +46,10 @@ def _require_backend():
 
 def _validate_ip(ip: str) -> str:
     return str(ipaddress.ip_address(ip))
+
+
+def _validate_cidr(cidr: str) -> str:
+    return str(ipaddress.ip_network(cidr, strict=False))
 
 
 def setup_firewall() -> str:
@@ -80,6 +91,89 @@ def list_blocked() -> str:
         return f"Falha ao listar bloqueios: {result.stderr.strip()}"
     ips = backend.parse_ips(result.stdout)
     return "\n".join(ips) if ips else "Nenhum IP bloqueado atualmente."
+
+
+def rate_limit_ip(ip: str, reason: str = "", connections_per_second: int = 10) -> str:
+    """Aplica rate limiting a um IP sem bloqueio total — throttle de nível 1,
+    antes de decidir por isolamento completo. No pf: max 20 conn/5s com
+    auto-promoção para bloqueio se exceder. No Linux: hashlimit 30/min."""
+    ip = _validate_ip(ip)
+    backend = _require_backend()
+    if not hasattr(backend, "rate_limit"):
+        return f"Backend {_SYSTEM} não tem suporte a rate limiting ainda."
+    result = backend.rate_limit(ip)
+    if result.returncode != 0:
+        if hasattr(backend, "setup_ratelimit"):
+            backend.setup_ratelimit()
+            result = backend.rate_limit(ip)
+        if result.returncode != 0:
+            log_event("firewall_ratelimit_failed", ip, result.stderr.strip(), action_taken="falhou")
+            return f"Falha ao aplicar rate limit em {ip}: {result.stderr.strip()}"
+    record_rate_limited(ip, connections_per_second, reason)
+    log_event("firewall_ratelimit_applied", ip, f"reason={reason!r} cps={connections_per_second}", action_taken="throttled")
+    return f"IP {ip} em rate limiting ({connections_per_second} conn/s)."
+
+
+def unrate_limit_ip(ip: str) -> str:
+    """Remove o rate limiting de um IP (não é desbloqueio — só remove o throttle)."""
+    ip = _validate_ip(ip)
+    backend = _require_backend()
+    if not hasattr(backend, "unrate_limit"):
+        return f"Backend {_SYSTEM} não tem suporte a rate limiting."
+    result = backend.unrate_limit(ip)
+    if result.returncode != 0:
+        return f"Falha ao remover rate limit de {ip}: {result.stderr.strip()}"
+    remove_rate_limited(ip)
+    log_event("firewall_ratelimit_removed", ip, "", action_taken="throttle_removido")
+    return f"Rate limit removido de {ip}."
+
+
+def list_rate_limited() -> str:
+    """Lista todos os IPs em rate limiting atualmente."""
+    rows = list_rate_limited_ips()
+    if not rows:
+        return "Nenhum IP em rate limiting no momento."
+    lines = ["IPs em rate limiting:"]
+    for ip, cps, at, reason in rows:
+        lines.append(f"  {ip} — {cps} conn/s desde {at} (motivo: {reason or 'não especificado'})")
+    return "\n".join(lines)
+
+
+def block_cidr(cidr: str, reason: str = "") -> str:
+    """Bloqueia um bloco CIDR inteiro (ex: '203.0.113.0/24'). Usado
+    principalmente pelo bloqueio de ASN — blast radius alto, usar com
+    cuidado."""
+    try:
+        cidr = _validate_cidr(cidr)
+    except ValueError as exc:
+        return f"CIDR inválido: {exc}"
+    backend = _require_backend()
+    if not hasattr(backend, "block_cidr"):
+        return f"Backend {_SYSTEM} não tem suporte a block_cidr."
+    if hasattr(backend, "setup_asn_block"):
+        backend.setup_asn_block()
+    result = backend.block_cidr(cidr)
+    if result.returncode != 0:
+        log_event("firewall_cidr_block_failed", cidr, result.stderr.strip(), action_taken="falhou")
+        return f"Falha ao bloquear CIDR {cidr}: {result.stderr.strip()}"
+    log_event("firewall_cidr_blocked", cidr, f"reason={reason!r}", action_taken="bloqueado")
+    return f"CIDR {cidr} bloqueado."
+
+
+def unblock_cidr(cidr: str) -> str:
+    """Remove bloqueio de um bloco CIDR."""
+    try:
+        cidr = _validate_cidr(cidr)
+    except ValueError as exc:
+        return f"CIDR inválido: {exc}"
+    backend = _require_backend()
+    if not hasattr(backend, "unblock_cidr"):
+        return f"Backend {_SYSTEM} não tem suporte a unblock_cidr."
+    result = backend.unblock_cidr(cidr)
+    if result.returncode != 0:
+        return f"Falha ao desbloquear CIDR {cidr}: {result.stderr.strip()}"
+    log_event("firewall_cidr_unblocked", cidr, "", action_taken="desbloqueado")
+    return f"CIDR {cidr} desbloqueado."
 
 
 def get_actual_blocked_ips() -> set[str] | None:

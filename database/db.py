@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -180,6 +181,32 @@ CREATE TABLE IF NOT EXISTS pending_actions (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     resolved_at TEXT,
     expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rate_limited_ips (
+    ip TEXT PRIMARY KEY,
+    connections_per_second INTEGER NOT NULL DEFAULT 10,
+    rate_limited_at TEXT NOT NULL DEFAULT (datetime('now')),
+    reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS playbook_executions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip TEXT NOT NULL,
+    attack_type TEXT NOT NULL,
+    level_reached INTEGER NOT NULL,
+    actions_json TEXT NOT NULL DEFAULT '[]',
+    triggered_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_playbook_executions_ip ON playbook_executions(ip);
+
+CREATE TABLE IF NOT EXISTS asn_blocks (
+    asn TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    prefixes_json TEXT NOT NULL DEFAULT '[]',
+    prefix_count INTEGER NOT NULL DEFAULT 0,
+    blocked_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -866,3 +893,99 @@ def remove_honeynet_range(cidr: str) -> bool:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM honeynet_ranges WHERE cidr = ?", (cidr,))
         return cur.rowcount > 0
+
+
+# ---------- rate limiting ----------
+
+def record_rate_limited(ip: str, connections_per_second: int, reason: str):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO rate_limited_ips (ip, connections_per_second, reason) "
+            "VALUES (?, ?, ?)",
+            (ip, connections_per_second, reason),
+        )
+
+
+def remove_rate_limited(ip: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM rate_limited_ips WHERE ip = ?", (ip,))
+
+
+def list_rate_limited_ips():
+    """Retorna (ip, connections_per_second, rate_limited_at, reason)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT ip, connections_per_second, rate_limited_at, reason "
+            "FROM rate_limited_ips ORDER BY rate_limited_at DESC"
+        ).fetchall()
+
+
+def get_rate_limited(ip: str):
+    """Retorna (connections_per_second, rate_limited_at, reason) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT connections_per_second, rate_limited_at, reason "
+            "FROM rate_limited_ips WHERE ip = ?",
+            (ip,),
+        ).fetchone()
+
+
+# ---------- playbook executions ----------
+
+def record_playbook_execution(ip: str, attack_type: str, level_reached: int, actions: list):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO playbook_executions (ip, attack_type, level_reached, actions_json) "
+            "VALUES (?, ?, ?, ?)",
+            (ip, attack_type, level_reached, json.dumps(actions)),
+        )
+
+
+def list_playbook_executions(ip: str | None = None, limit: int = 20):
+    """Retorna (ip, attack_type, level_reached, actions_json, triggered_at)."""
+    with get_conn() as conn:
+        if ip:
+            return conn.execute(
+                "SELECT ip, attack_type, level_reached, actions_json, triggered_at "
+                "FROM playbook_executions WHERE ip = ? ORDER BY triggered_at DESC LIMIT ?",
+                (ip, limit),
+            ).fetchall()
+        return conn.execute(
+            "SELECT ip, attack_type, level_reached, actions_json, triggered_at "
+            "FROM playbook_executions ORDER BY triggered_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+# ---------- ASN blocks ----------
+
+def record_asn_block(asn: str, description: str, prefixes: list):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO asn_blocks (asn, description, prefixes_json, prefix_count) "
+            "VALUES (?, ?, ?, ?)",
+            (asn, description, json.dumps(prefixes), len(prefixes)),
+        )
+
+
+def remove_asn_block(asn: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM asn_blocks WHERE asn = ?", (asn,))
+        return cur.rowcount > 0
+
+
+def list_asn_blocks():
+    """Retorna (asn, description, prefix_count, blocked_at)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT asn, description, prefix_count, blocked_at FROM asn_blocks ORDER BY blocked_at DESC"
+        ).fetchall()
+
+
+def get_asn_block(asn: str):
+    """Retorna (description, prefixes_json, blocked_at) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT description, prefixes_json, blocked_at FROM asn_blocks WHERE asn = ?",
+            (asn,),
+        ).fetchone()

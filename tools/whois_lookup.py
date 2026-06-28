@@ -60,6 +60,30 @@ def _validate_asn(asn: str) -> str:
     return match.group(1)
 
 
+def get_asn_prefixes(asn: str) -> list[str]:
+    """Retorna a lista de prefixos CIDR anunciados por um ASN, via RIPEstat.
+    Usado internamente pelo bloqueio por ASN. Retorna lista vazia se o ASN
+    não existir, não tiver prefixos públicos, ou a consulta falhar."""
+    try:
+        number = _validate_asn(asn)
+    except ValueError:
+        return []
+    resource = f"AS{number}"
+    try:
+        response = requests.get(
+            f"{_RIPESTAT_BASE}/announced-prefixes/data.json",
+            params={"resource": resource},
+            timeout=_TIMEOUT_SECONDS,
+        ).json()
+    except (requests.RequestException, ValueError):
+        return []
+    return [
+        p.get("prefix")
+        for p in response.get("data", {}).get("prefixes", [])
+        if p.get("prefix")
+    ]
+
+
 def asn_lookup(asn: str) -> str:
     """Consulta quem é o dono de um ASN e quais prefixos IP ele anuncia
     hoje, via API pública do RIPEstat (cobre qualquer RIR, não só
