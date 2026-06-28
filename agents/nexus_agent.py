@@ -53,6 +53,7 @@ from tools import (
     watchdog,
     web_injection,
 )
+from tools import asset_inventory, client_baseline, infrastructure
 from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
@@ -1136,6 +1137,109 @@ def list_blocked_asns() -> str:
     return asn_block.list_blocked_asns()
 
 
+# ---- Fase 5: Infraestrutura, Inventário e Baseline por Cliente ----
+
+@tool
+def register_own_ip_block(cidr: str, description: str = "",
+                           is_critical: bool = False, asn: str = "") -> str:
+    """Registra um bloco CIDR como infraestrutura própria da Xfiber.
+    is_critical=True protege todos os IPs desse bloco contra auto-bloqueio
+    acidental pelo sistema de defesa. Use para blocos de servidores, DNS,
+    roteadores e sistemas críticos."""
+    return infrastructure.register_ip_block(cidr, description, is_critical, asn)
+
+
+@tool
+def unregister_own_ip_block(cidr: str) -> str:
+    """Remove um bloco CIDR do mapa de infraestrutura própria."""
+    return infrastructure.unregister_ip_block(cidr)
+
+
+@tool
+def register_own_asn(asn: str, description: str = "") -> str:
+    """Registra um ASN como pertencente à Xfiber (ex: 'AS65001'). Usado para
+    documentar a identidade BGP própria e cruzar com o mapa de blocos IP."""
+    return infrastructure.register_own_asn(asn, description)
+
+
+@tool
+def register_topology_node(name: str, node_type: str,
+                            ip_or_cidr: str, description: str = "") -> str:
+    """Registra um nó de topologia da Xfiber: roteadores (router), servidores
+    (server), DNS servers (dns), firewalls (firewall), switches (switch).
+    Exemplo: register_topology_node('rb750-core', 'router', '192.168.0.1', 'Mikrotik principal')."""
+    return infrastructure.register_topology_node(name, node_type, ip_or_cidr, description)
+
+
+@tool
+def list_own_infrastructure() -> str:
+    """Exibe o mapa completo de infraestrutura própria da Xfiber: blocos IP
+    registrados (com flag de crítico), ASNs próprios e topologia de rede."""
+    return infrastructure.list_own_infrastructure()
+
+
+@tool
+def scan_own_network(cidr: str = "", mode: str = "passive") -> str:
+    """Executa um scan de inventário nos blocos IP próprios registrados.
+    cidr vazio = varre todos os blocos cadastrados.
+    mode='passive': só ping (rápido, não intrusivo).
+    mode='light': ping + top 100 portas TCP (detecta serviços, mais lento).
+    Detecta automaticamente novos dispositivos e mudanças de configuração."""
+    return asset_inventory.scan_network(cidr or None, mode)
+
+
+@tool
+def list_known_assets() -> str:
+    """Lista todos os ativos descobertos pelo inventário automático: IP,
+    hostname, portas abertas, OS estimado e quando foram vistos pela última vez."""
+    return asset_inventory.list_known_assets()
+
+
+@tool
+def list_asset_changes(limit: int = 20) -> str:
+    """Lista as últimas mudanças detectadas no inventário de ativos: novos
+    dispositivos, portas que abriram/fecharam, mudanças de hostname."""
+    return asset_inventory.list_asset_changes(limit)
+
+
+@tool
+def add_client_profile(client_id: str, cidr: str, description: str = "") -> str:
+    """Cadastra um cliente da Xfiber com seu bloco IP para monitoramento
+    individualizado de tráfego. Exemplo: add_client_profile('empresa-xyz',
+    '200.100.50.0/24', 'Empresa XYZ — contrato fibra 1Gbps')."""
+    return client_baseline.add_client_profile(client_id, cidr, description)
+
+
+@tool
+def remove_client_profile(client_id: str) -> str:
+    """Remove um cliente do cadastro de baseline (não apaga amostras históricas)."""
+    return client_baseline.remove_client_profile(client_id)
+
+
+@tool
+def list_client_profiles() -> str:
+    """Lista todos os clientes da Xfiber cadastrados com seus respectivos
+    blocos IP para monitoramento de baseline individualizado."""
+    return client_baseline.list_client_profiles()
+
+
+@tool
+def check_client_anomaly_status(client_id: str, total_connections: int) -> str:
+    """Verifica se o volume atual de conexões de um cliente específico da
+    Xfiber está dentro ou fora do padrão histórico daquele cliente
+    (z-score baseado em hora do dia + dia da semana). Use quando suspeitar
+    de ataque DDoS direcionado a um cliente específico."""
+    return client_baseline.describe_client_anomaly_status(client_id, total_connections)
+
+
+@tool
+def list_all_client_baselines() -> str:
+    """Resume o status de baseline de todos os clientes cadastrados:
+    média histórica de tráfego, desvio padrão e quantidade de amostras.
+    Mostra quais clientes já têm baseline suficiente para detecção."""
+    return client_baseline.describe_all_client_baselines()
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -1242,6 +1346,19 @@ TOOLS = [
     propose_asn_block,
     release_asn_block,
     list_blocked_asns,
+    register_own_ip_block,
+    unregister_own_ip_block,
+    register_own_asn,
+    register_topology_node,
+    list_own_infrastructure,
+    scan_own_network,
+    list_known_assets,
+    list_asset_changes,
+    add_client_profile,
+    remove_client_profile,
+    list_client_profiles,
+    check_client_anomaly_status,
+    list_all_client_baselines,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
@@ -1398,6 +1515,26 @@ Sua missão:
     a ele em vez de adivinhar ou pular a etapa. Sempre chame a tool de
     verdade antes de dizer que algo não é possível; nunca invente que uma
     ferramenta "não está integrada" sem ter tentado chamá-la primeiro.
+
+23. Você conhece a infraestrutura própria da Xfiber (register_own_ip_block,
+    register_own_asn, register_topology_node, list_own_infrastructure):
+    registre blocos IP, ASNs e nós de topologia para que o sistema nunca
+    bloqueie a própria infraestrutura. IPs marcados como críticos
+    (is_critical=True) são protegidos de auto-bloqueio — use isso para
+    roteadores, DNS servers (.90, .91, .92) e servidores essenciais. Quando
+    {CREATOR_NAME} descrever a rede da Xfiber, registre imediatamente
+    no mapa em vez de só mencionar.
+24. O inventário automático de ativos (scan_own_network, list_known_assets,
+    list_asset_changes) varre os blocos IP registrados e detecta novos
+    dispositivos e mudanças de configuração (portas que abriram, novos hosts).
+    Um device novo na rede pode ser um roteador comprometido ou equipamento
+    não autorizado — avise {CREATOR_NAME} proativamente se aparecer algo
+    inesperado no list_asset_changes.
+25. Cada cliente da Xfiber pode ter um perfil de baseline individualizado
+    (add_client_profile, list_client_profiles). Após semanas de histórico,
+    check_client_anomaly_status detecta DDoS direcionado a UM cliente antes
+    que afete os outros — é mais preciso que a detecção global por volume.
+    Quando {CREATOR_NAME} mencionar um cliente da Xfiber, ofereça cadastrá-lo.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar

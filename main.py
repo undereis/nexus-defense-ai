@@ -15,6 +15,8 @@ from config import (
     ALERT_COOLDOWN_SECONDS,
     ALLOW_ACTIVE_EXPLOITATION,
     ALLOW_SOCIAL_ENGINEERING,
+    ASSET_INVENTORY_SCAN_INTERVAL,
+    ASSET_INVENTORY_SCAN_MODE,
     AUDIT_CHECKPOINT_INTERVAL,
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
@@ -36,6 +38,8 @@ from database.db import (
 )
 from tools import firewall, honeypot
 from tools.anomaly import record_current_sample
+from tools.asset_inventory import scan_network as _inventory_scan
+from tools.client_baseline import check_all_client_anomalies, record_all_client_samples
 from tools.audit import create_checkpoint
 from tools.notify import send_notification
 from tools.policy import classify_threats
@@ -73,6 +77,21 @@ def monitor_loop(stop_event: threading.Event):
             now = time.time()
             counts = _detector.snapshot_counts()
             record_current_sample(sum(counts.values()), len(counts))
+            record_all_client_samples(counts)
+
+            # Anomalia por cliente: detecta desvio específico de um cliente
+            # antes que ele afete o volume global.
+            client_anomalies = check_all_client_anomalies(counts)
+            for ca in client_anomalies:
+                log_event(
+                    "client_anomaly_detected",
+                    ca["client_id"],
+                    f"z_score={ca['z_score']} current={ca['current']} mean={ca['mean']}",
+                )
+                _announce(
+                    f"ANOMALIA POR CLIENTE: '{ca['client_id']}' com {ca['current']} conexões "
+                    f"(z-score {ca['z_score']}, média histórica {ca['mean']})."
+                )
 
             # Bloqueio proativo: qualquer IP ativo que já está numa lista
             # global de ameaça conhecida (Spamhaus/Feodo/ET) é isolado na
@@ -240,6 +259,25 @@ def threat_feed_refresh_loop(stop_event: threading.Event):
         stop_event.wait(THREAT_FEED_REFRESH_INTERVAL_HOURS * 3600)
 
 
+def asset_inventory_loop(stop_event: threading.Event):
+    """Varredura periódica dos blocos IP próprios para detectar novos devices
+    ou mudanças de configuração. Só roda se ASSET_INVENTORY_SCAN_INTERVAL > 0."""
+    if ASSET_INVENTORY_SCAN_INTERVAL <= 0:
+        return
+    while not stop_event.is_set():
+        try:
+            result = _inventory_scan(mode=ASSET_INVENTORY_SCAN_MODE)
+            if "NOVO" in result or "MUDANÇA" in result:
+                _announce(f"Inventário de ativos: {result}")
+                send_notification("Nexus: mudança no inventário de ativos", result)
+                log_event("asset_inventory_changes", None, result[:500], action_taken="notificado")
+            else:
+                log_event("asset_inventory_ok", None, result[:200])
+        except Exception as exc:
+            log_event("asset_inventory_error", None, str(exc))
+        stop_event.wait(ASSET_INVENTORY_SCAN_INTERVAL)
+
+
 def risk_sweep_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
@@ -303,6 +341,10 @@ def main():
     risk_sweep_thread.start()
     threat_feed_thread = threading.Thread(target=threat_feed_refresh_loop, args=(stop_event,), daemon=True)
     threat_feed_thread.start()
+    asset_inventory_thread = threading.Thread(
+        target=asset_inventory_loop, args=(stop_event,), daemon=True
+    )
+    asset_inventory_thread.start()
 
     try:
         while True:
