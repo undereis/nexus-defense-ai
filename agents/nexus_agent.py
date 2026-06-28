@@ -53,7 +53,7 @@ from tools import (
     watchdog,
     web_injection,
 )
-from tools import asset_inventory, brbos, client_baseline, dns_monitor, infrastructure
+from tools import asset_inventory, brbos, client_baseline, dns_monitor, infrastructure, ttp_profile
 from tools import whois_lookup as whois_module
 from tools import risk as risk_gate
 from tools.network_monitor import DdosDetector
@@ -259,6 +259,27 @@ def find_similar_attacker_fingerprints(ip: str, hours: float = 168) -> str:
     Precisa de pelo menos 3 conexões do IP em honeypot pra ser
     confiável — com poucos dados, qualquer correspondência é coincidência."""
     return fingerprint.describe_similar_attackers(ip, hours)
+
+
+@tool
+def profile_attacker_groups(hours: float = 168) -> str:
+    """Inteligência de contra-ataque: agrupa os IPs atacantes do período em
+    GRUPOS que compartilham comportamento (sequência de portas/timing),
+    técnicas MITRE, portas-alvo e ASN de origem — e descreve cada grupo de
+    forma preditiva ("esse grupo vem do ASN X, ataca por volta das 14h UTC,
+    prefere as portas Y, usa essas ferramentas"). Read-only, sobre dados de
+    honeypot/eventos já coletados. Use quando o operador perguntar
+    "quem está me atacando", "tem campanha coordenada?" ou pedir um panorama
+    dos adversários em vez de um IP isolado."""
+    return ttp_profile.profile_attacker_groups(hours)
+
+
+@tool
+def which_attacker_group(ip: str, hours: float = 168) -> str:
+    """Diz a que grupo de atacante um IP pertence e mostra o perfil desse
+    grupo (outros membros = possível mesmo ator com IP diferente). Use para
+    contextualizar um IP específico dentro de uma campanha maior."""
+    return ttp_profile.which_group(ip, hours)
 
 
 @tool
@@ -1366,6 +1387,8 @@ TOOLS = [
     check_ioc_recon_signal,
     list_ioc_recon_watchlist,
     find_similar_attacker_fingerprints,
+    profile_attacker_groups,
+    which_attacker_group,
     describe_threat_feed_status,
     check_file_hash_reputation,
     check_watchdog_health,
