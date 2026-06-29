@@ -2,8 +2,8 @@
 
 Arquitetura: o **motor fica em Python** (servidor Linux: agente + tools + DB +
 monitor) e qualquer **interface visual é um cliente** que fala HTTP com esta
-API — incluindo o cliente Delphi de referência em `clients/delphi/` e o
-dashboard web embutido (`/dashboard`).
+API — incluindo o cliente desktop de referência (Tauri + React) em
+`clients/tauri/` e o dashboard web embutido (`/dashboard`).
 
 Servir: `venv/bin/uvicorn api.server:app --host 0.0.0.0 --port 8000`
 (em produção, atrás de HTTPS — nginx/caddy ou túnel).
@@ -67,5 +67,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" "$BASE/api/billing/run?dry_run
 ## Notas de segurança
 - Sempre atrás de **HTTPS** fora da LAN (o token vai no header em texto).
 - O token é o que protege as ações — trate como segredo; rotacione se vazar.
-- CORS não está habilitado por padrão (cliente nativo Delphi não precisa; para
-  um front web em outro domínio, habilitar CORS explicitamente).
+- CORS não está habilitado por padrão e **não precisa ser**: o cliente Tauri
+  faz as requisições pelo plugin HTTP nativo (Rust), que não passa pela política
+  de CORS do webview. Para um front web servido em outro domínio, aí sim seria
+  preciso habilitar CORS explicitamente.
