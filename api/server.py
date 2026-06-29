@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from agents.runtime import ask_agent
 from config import API_TOKEN, SLACK_SIGNING_SECRET
 from database.db import init_db, log_event
-from tools import telegram
+from tools import noc_commands, telegram
 from tools.slack_verify import verify_signature
 
 app = FastAPI(title="Nexus Defense AI", version="0.1.0")
@@ -108,10 +108,15 @@ async def slack_command(request: Request, background_tasks: BackgroundTasks):
 
 
 def _telegram_answer(text: str, chat_id):
-    try:
-        reply = ask_agent(text)
-    except Exception as exc:
-        reply = f"Tive um erro processando isso: {exc}"
+    # Fast-path: consultas frequentes do NOC respondem direto, sem LLM
+    # (milissegundos vs segundos). Só leitura; ações/linguagem natural caem
+    # no agente, que tem mais contexto e guarda.
+    reply = noc_commands.handle_command(text)
+    if reply is None:
+        try:
+            reply = ask_agent(text)
+        except Exception as exc:
+            reply = f"Tive um erro processando isso: {exc}"
     telegram.send_telegram_to(chat_id, reply)
 
 
