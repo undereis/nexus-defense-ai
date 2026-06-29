@@ -1671,6 +1671,15 @@ def send_telegram_test(message: str = "Teste de notificação da Nexus.") -> str
 
 
 @tool
+def telegram_status() -> str:
+    """Diagnóstico do Telegram para saber se está respondendo: valida o token
+    (getMe), mostra o chat alvo e o estado do webhook bidirecional (registrado?
+    houve erro de entrega?). Use quando quiser confirmar que o canal está vivo,
+    tanto o envio (outbound) quanto o controle pelo grupo (inbound)."""
+    return telegram.get_webhook_info()
+
+
+@tool
 def setup_telegram_webhook(public_url: str) -> str:
     """Registra o webhook do Telegram (controle bidirecional do NOC) apontando
     para public_url, que deve ser HTTPS e terminar em /telegram/webhook (ex.:
@@ -1971,6 +1980,7 @@ TOOLS = [
     check_devices_now,
     list_device_outages,
     send_telegram_test,
+    telegram_status,
     setup_telegram_webhook,
     noc_status,
     noc_status_pdf,

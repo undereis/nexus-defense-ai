@@ -136,6 +136,67 @@ def test_send_telegram_to_posts_to_given_chat(monkeypatch):
     assert captured["json"]["text"] == "resposta"
 
 
+def _fake_get_factory(getme_ok=True, webhook_url="", last_error=""):
+    def fake_get(url, timeout=None):
+        if url.endswith("/getMe"):
+            if getme_ok:
+                return _FakeResp(200, {"ok": True, "result": {"username": "NexusBot", "id": 7}})
+            return _FakeResp(200, {"ok": False, "description": "Unauthorized"})
+        if url.endswith("/getWebhookInfo"):
+            result = {"url": webhook_url, "pending_update_count": 0}
+            if last_error:
+                result["last_error_message"] = last_error
+            return _FakeResp(200, {"ok": True, "result": result})
+        return _FakeResp(404, {"ok": False})
+    return fake_get
+
+
+def test_get_webhook_info_unconfigured(monkeypatch):
+    monkeypatch.setattr(telegram, "TELEGRAM_BOT_TOKEN", "")
+    assert "não configurado" in telegram.get_webhook_info()
+
+
+def test_get_webhook_info_token_invalid(monkeypatch):
+    monkeypatch.setattr(telegram, "TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setattr(telegram.requests, "get", _fake_get_factory(getme_ok=False))
+    out = telegram.get_webhook_info()
+    assert "Token inválido" in out
+
+
+def test_get_webhook_info_no_webhook(monkeypatch):
+    monkeypatch.setattr(telegram, "TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setattr(telegram, "TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setattr(telegram.requests, "get", _fake_get_factory(webhook_url=""))
+    out = telegram.get_webhook_info()
+    assert "@NexusBot" in out
+    assert "NÃO registrado" in out
+
+
+def test_get_webhook_info_healthy(monkeypatch):
+    monkeypatch.setattr(telegram, "TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setattr(telegram, "TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setattr(
+        telegram.requests, "get",
+        _fake_get_factory(webhook_url="https://noc.x/telegram/webhook"),
+    )
+    out = telegram.get_webhook_info()
+    assert "registrado em: https://noc.x/telegram/webhook" in out
+    assert "saudável" in out
+
+
+def test_get_webhook_info_delivery_error(monkeypatch):
+    monkeypatch.setattr(telegram, "TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setattr(telegram, "TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setattr(
+        telegram.requests, "get",
+        _fake_get_factory(webhook_url="https://noc.x/telegram/webhook",
+                          last_error="Connection refused"),
+    )
+    out = telegram.get_webhook_info()
+    assert "ÚLTIMO ERRO DE ENTREGA" in out
+    assert "Connection refused" in out
+
+
 def test_set_webhook_requires_https(monkeypatch):
     monkeypatch.setattr(telegram, "TELEGRAM_BOT_TOKEN", "123:abc")
     monkeypatch.setattr(telegram, "TELEGRAM_WEBHOOK_SECRET", "s3cr3t")
