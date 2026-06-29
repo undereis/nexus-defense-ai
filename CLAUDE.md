@@ -32,9 +32,11 @@ interativa ou API REST.
 - `_AUTO_CAP = 2` em `tools/playbook.py` é **hardcoded** — nível 3 (BGP FlowSpec)
   **nunca executa automaticamente**, independente do valor de `PLAYBOOK_AUTO_LEVEL`.
 - Toda ação de BGP e ASN block passa por gate de confirmação fora de banda (`tools/risk.py`).
-- `ALLOW_ACTIVE_EXPLOITATION`, `ALLOW_ASN_BLOCK`, `ALLOW_BGP_FLOWSPEC`, `ALLOW_BRBOS_BLOCK`,
-  `ALLOW_MALWARE_DETONATION` e `SUBSCRIBER_BILLING_ENABLED` são **false** por padrão. Não
-  ativar sem contexto explícito do operador.
+- `ALLOW_ACTIVE_EXPLOITATION`, `ALLOW_ASN_BLOCK`, `ALLOW_BRBOS_BLOCK`,
+  `ALLOW_MALWARE_DETONATION`, `ALLOW_SOCIAL_ENGINEERING`, `ALLOW_THRESHOLD_AUTOTUNE` e
+  `SUBSCRIBER_BILLING_ENABLED` são **false** por padrão. Não ativar sem contexto explícito
+  do operador. (BGP FlowSpec NÃO tem toggle `ALLOW_*`: é gated por `_AUTO_CAP=2` +
+  `EXABGP_API_PIPE` vazio + gate do `risk.py` — ver acima.)
 - **Bloqueio de inadimplentes (Fase 8, `tools/billing.py`)** tem **cap de segurança**
   hardcoded-by-config `SUBSCRIBER_BLOCK_MAX_BATCH` (padrão 50): um ciclo que bloquearia mais
   que o cap de uma vez **não bloqueia ninguém** — só alerta (proteção contra erro na fonte
