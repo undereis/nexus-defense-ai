@@ -49,4 +49,14 @@ def generate_summary_report(hours: float = 24) -> str:
     lines.append("Estado atual do firewall:")
     lines.append("  " + list_blocked().replace("\n", "\n  "))
 
+    # Painel de operação (Fase 8): assinantes, equipamentos, quedas abertas.
+    # Import lazy para não acoplar o resumo executivo ao módulo de NOC.
+    try:
+        from tools.noc_report import noc_status_report
+
+        lines.append("")
+        lines.append(noc_status_report())
+    except Exception:
+        pass
+
     return "\n".join(lines)

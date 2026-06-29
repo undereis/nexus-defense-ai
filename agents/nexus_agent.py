@@ -63,7 +63,7 @@ from tools import (
     web_injection,
 )
 from tools import asset_inventory, brbos, client_baseline, client_risk, dns_monitor, infrastructure, threshold_tuning, ttp_profile
-from tools import billing, device_monitor, telegram
+from tools import billing, device_monitor, noc_report, telegram
 from tools import tool_fingerprint
 from tools import deception
 from tools import malware_sandbox
@@ -1681,6 +1681,23 @@ def setup_telegram_webhook(public_url: str) -> str:
 
 
 @tool
+def noc_status() -> str:
+    """Painel consolidado de operação (NOC): assinantes (ativos/bloqueados/
+    fatura pendente), saúde dos equipamentos (online/offline), chamados de
+    queda abertos e as últimas ações de bloqueio/desbloqueio. Visão de relance
+    do estado operacional da rede."""
+    return noc_report.noc_status_report()
+
+
+@tool
+def noc_status_pdf(path: str = "") -> str:
+    """Gera um relatório executivo NOC em PDF (com mini-gráficos de barra) sob a
+    WORKDIR. path opcional para escolher o arquivo. Útil para enviar/arquivar o
+    estado da operação. Retorna o caminho gerado."""
+    return noc_report.noc_status_pdf(path)
+
+
+@tool
 def threshold_tuning_overview() -> str:
     """Lista todos os thresholds que a Nexus já recalibrou automaticamente
     (valor aprendido vs base, motivo e quando) — visão geral do auto-ajuste."""
@@ -1955,6 +1972,8 @@ TOOLS = [
     list_device_outages,
     send_telegram_test,
     setup_telegram_webhook,
+    noc_status,
+    noc_status_pdf,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
