@@ -63,7 +63,7 @@ from tools import (
     web_injection,
 )
 from tools import asset_inventory, brbos, client_baseline, client_risk, dns_monitor, infrastructure, threshold_tuning, ttp_profile
-from tools import billing, device_monitor, noc_report, selftest, telegram
+from tools import billing, device_monitor, noc_report, selftest, siem, telegram
 from tools import tool_fingerprint
 from tools import deception
 from tools import malware_sandbox
@@ -1690,6 +1690,22 @@ def setup_telegram_webhook(public_url: str) -> str:
 
 
 @tool
+def siem_status() -> str:
+    """Estado da integração SIEM (Frente I): modo (off/elastic/splunk/webhook),
+    se está configurado, o cursor de encaminhamento e quantos eventos da
+    auditoria ainda estão na fila para enviar."""
+    return siem.describe_status()
+
+
+@tool
+def siem_forward_now() -> str:
+    """Encaminha AGORA ao SIEM os eventos da auditoria ainda não enviados
+    (incremental; só avança o cursor se o destino confirmar). Útil para testar a
+    integração sem esperar o loop periódico."""
+    return siem.forward_new_events()
+
+
+@tool
 def nexus_health() -> str:
     """Autodiagnóstico de prontidão: relatório único do estado do núcleo (DB,
     integridade da auditoria, backend de firewall), integrações (Mikrotik,
@@ -1992,6 +2008,8 @@ TOOLS = [
     send_telegram_test,
     telegram_status,
     setup_telegram_webhook,
+    siem_status,
+    siem_forward_now,
     nexus_health,
     noc_status,
     noc_status_pdf,

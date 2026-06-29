@@ -337,3 +337,17 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # bidirecional DESLIGADO (Telegram fica só outbound). Gere um valor aleatório
 # forte e NUNCA o commite. Defesa em profundidade junto da checagem de chat_id.
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+
+# --- Integração SIEM (Frente I) ---
+# Encaminha os eventos da trilha de auditoria a um SIEM externo, incremental.
+# SIEM_MODE: 'off' (padrão) | 'elastic' (_bulk) | 'splunk' (HEC) | 'webhook'
+# (POST de array JSON genérico). Off = nada é enviado. SIEM_URL é o endpoint
+# completo; SIEM_TOKEN a credencial (API key do Elastic / token do HEC / Bearer
+# do webhook). SIEM_INDEX só vale para o elastic. Leitura/escrita só de eventos
+# já gravados — não muda nada na detecção.
+SIEM_MODE = os.getenv("SIEM_MODE", "off")
+SIEM_URL = os.getenv("SIEM_URL", "")
+SIEM_TOKEN = os.getenv("SIEM_TOKEN", "")
+SIEM_INDEX = os.getenv("SIEM_INDEX", "nexus-events")
+SIEM_BATCH = int(os.getenv("SIEM_BATCH", "500"))
+SIEM_FORWARD_INTERVAL = int(os.getenv("SIEM_FORWARD_INTERVAL", "60"))
