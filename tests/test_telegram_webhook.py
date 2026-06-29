@@ -74,12 +74,38 @@ def test_authorized_command_dispatched_and_answered(configured, client, monkeypa
     monkeypatch.setattr(server, "ask_agent", lambda t: f"eco:{t}")
     monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
 
-    r = client.post("/telegram/webhook", json=_msg("/status@NexusBot agora"),
+    # 'ping' não é comando de fast-path -> normalize + dispatch ao agente
+    r = client.post("/telegram/webhook", json=_msg("/ping@NexusBot agora"),
                     headers={_HDR: "s3cr3t"})
 
     assert r.status_code == 200
     # normalize_command tirou a barra e o @bot; resposta foi ao chat autorizado
-    assert sent == [(-100777, "eco:status agora")]
+    assert sent == [(-100777, "eco:ping agora")]
+
+
+def test_status_uses_fast_path_without_agent(configured, client, monkeypatch):
+    """/status deve responder pelo fast-path (NOC) SEM invocar o agente (LLM)."""
+    called, sent = [], []
+    monkeypatch.setattr(server, "ask_agent", lambda t: called.append(t) or "NÃO DEVIA")
+    monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
+
+    r = client.post("/telegram/webhook", json=_msg("/status"), headers={_HDR: "s3cr3t"})
+
+    assert r.status_code == 200
+    assert called == []  # agente NÃO foi chamado
+    assert sent and "PAINEL NOC" in sent[0][1]
+
+
+def test_natural_language_falls_back_to_agent(configured, client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(server, "ask_agent", lambda t: f"eco:{t}")
+    monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
+
+    r = client.post("/telegram/webhook", json=_msg("quantos assinantes bloqueados?"),
+                    headers={_HDR: "s3cr3t"})
+
+    assert r.status_code == 200
+    assert sent == [(-100777, "eco:quantos assinantes bloqueados?")]
 
 
 def test_non_text_update_ignored(configured, client, monkeypatch):
