@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from agents.runtime import ask_agent
 from config import API_TOKEN, SLACK_SIGNING_SECRET
 from database.db import init_db, log_event
-from tools import dashboard, noc_commands, telegram
+from tools import dashboard, noc_api, noc_commands, telegram
 from tools.slack_verify import verify_signature
 
 app = FastAPI(title="Nexus Defense AI", version="0.1.0")
@@ -72,6 +72,61 @@ def dashboard_page():
 @app.get("/dashboard/data", dependencies=[Depends(require_token)])
 def dashboard_data():
     return dashboard.dashboard_data()
+
+
+# ---------- API REST para clientes externos (GUI Delphi, etc) ----------
+# Tudo sob /api/*, JSON, protegido pelo token (require_token). Contrato em
+# docs/api.md. Consultas read-only; ações reaproveitam a guarda/auditoria dos
+# módulos (tools/billing, tools/device_monitor).
+
+@app.get("/api/overview", dependencies=[Depends(require_token)])
+def api_overview():
+    return dashboard.dashboard_data()
+
+
+@app.get("/api/health", dependencies=[Depends(require_token)])
+def api_health():
+    return noc_api.health()
+
+
+@app.get("/api/subscribers", dependencies=[Depends(require_token)])
+def api_subscribers():
+    return {"subscribers": noc_api.subscribers()}
+
+
+@app.get("/api/devices", dependencies=[Depends(require_token)])
+def api_devices():
+    return {"devices": noc_api.devices()}
+
+
+@app.get("/api/outages", dependencies=[Depends(require_token)])
+def api_outages(status: str = "aberto"):
+    return {"outages": noc_api.outages(status)}
+
+
+@app.get("/api/events", dependencies=[Depends(require_token)])
+def api_events(hours: float = 24):
+    return {"events": noc_api.events(hours)}
+
+
+@app.post("/api/subscribers/{subscriber_id}/block", dependencies=[Depends(require_token)])
+def api_block_subscriber(subscriber_id: str, reason: str = "bloqueio via API"):
+    return noc_api.block_subscriber(subscriber_id, reason)
+
+
+@app.post("/api/subscribers/{subscriber_id}/unblock", dependencies=[Depends(require_token)])
+def api_unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio via API"):
+    return noc_api.unblock_subscriber(subscriber_id, reason)
+
+
+@app.post("/api/billing/run", dependencies=[Depends(require_token)])
+def api_run_billing(dry_run: bool = True):
+    return noc_api.run_billing(dry_run)
+
+
+@app.post("/api/devices/check", dependencies=[Depends(require_token)])
+def api_check_devices():
+    return noc_api.check_devices()
 
 
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_token)])
