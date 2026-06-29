@@ -476,6 +476,14 @@ CREATE TABLE IF NOT EXISTS device_outages (
     resolved_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_device_outages_dev ON device_outages(device_id);
+
+-- Cursor de encaminhamento ao SIEM (Frente I): id do último evento já enviado,
+-- para o forward ser incremental (linha única, id fixo = 1).
+CREATE TABLE IF NOT EXISTS siem_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_event_id INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -553,6 +561,35 @@ def get_all_events():
             "SELECT id, timestamp, event_type, source_ip, detail, action_taken, "
             "prev_hash, entry_hash FROM events ORDER BY id ASC"
         ).fetchall()
+
+
+def get_events_after_id(last_id: int, limit: int = 500):
+    """Retorna (id, timestamp, event_type, source_ip, detail, action_taken) dos
+    eventos com id > last_id, em ordem — base do encaminhamento incremental ao
+    SIEM (Frente I)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT id, timestamp, event_type, source_ip, detail, action_taken FROM events "
+            "WHERE id > ? ORDER BY id ASC LIMIT ?",
+            (last_id, limit),
+        ).fetchall()
+
+
+def get_siem_cursor() -> int:
+    with get_conn() as conn:
+        row = conn.execute("SELECT last_event_id FROM siem_state WHERE id = 1").fetchone()
+    return row[0] if row else 0
+
+
+def set_siem_cursor(last_event_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO siem_state (id, last_event_id, updated_at) "
+            "VALUES (1, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET last_event_id = excluded.last_event_id, "
+            "updated_at = datetime('now')",
+            (last_event_id,),
+        )
 
 
 def get_events_since(hours: float):

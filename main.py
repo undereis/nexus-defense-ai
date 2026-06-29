@@ -32,6 +32,7 @@ from config import (
     RECONCILE_POLL_INTERVAL,
     REPORT_INTERVAL_HOURS,
     RISK_SWEEP_INTERVAL,
+    SIEM_FORWARD_INTERVAL,
     SUBSCRIBER_BILLING_ENABLED,
     SUBSCRIBER_BLOCK_HOUR,
     THREAT_FEED_REFRESH_INTERVAL_HOURS,
@@ -45,6 +46,7 @@ from database.db import (
 )
 from tools import client_risk, firewall, honeypot
 from tools.anomaly import record_current_sample
+from tools import siem
 from tools.billing import run_billing_cycle
 from tools.device_monitor import check_all_devices
 from tools.asset_inventory import scan_network as _inventory_scan
@@ -387,6 +389,20 @@ def device_monitor_loop(stop_event: threading.Event):
         stop_event.wait(DEVICE_MONITOR_INTERVAL)
 
 
+def siem_loop(stop_event: threading.Event):
+    """Encaminha os eventos novos da auditoria ao SIEM externo, incremental.
+    Só roda se SIEM_MODE != off e SIEM_URL configurado. Não loga o resultado
+    de rotina (evitaria realimentação: cada log vira evento a encaminhar)."""
+    if not siem.is_enabled():
+        return
+    while not stop_event.is_set():
+        try:
+            siem.forward_new_events()
+        except Exception as exc:
+            log_event("siem_loop_error", None, str(exc))
+        stop_event.wait(SIEM_FORWARD_INTERVAL)
+
+
 def main():
     init_db()
     print("=== Nexus Defense AI ===")
@@ -444,6 +460,8 @@ def main():
         target=device_monitor_loop, args=(stop_event,), daemon=True
     )
     device_monitor_thread.start()
+    siem_thread = threading.Thread(target=siem_loop, args=(stop_event,), daemon=True)
+    siem_thread.start()
 
     try:
         while True:

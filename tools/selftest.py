@@ -87,6 +87,12 @@ def run_selftest() -> str:
     lines.append("   " + ("✅ Feeds threat intel: " + ", ".join(feeds) if feeds
                           else "⚠️ Feeds threat intel: nenhuma API key"))
 
+    def _siem_line():
+        from tools import siem
+        return "✅ SIEM: " + siem.describe_status().replace("SIEM: ", "") if siem.is_enabled() \
+            else "⚠️ SIEM: desligado"
+    lines.append("   " + _safe(_siem_line))
+
     lines.append("")
     lines.append("• Travas de segurança (off por padrão é o esperado):")
     lines.append(f"   Exploração ativa: {_yn(config.ALLOW_ACTIVE_EXPLOITATION)} | "

@@ -88,7 +88,7 @@ interativa ou API REST.
 
 ## Onde está o quê
 
-- **Agente LangGraph:** `agents/nexus_agent.py` (182 tools registradas)
+- **Agente LangGraph:** `agents/nexus_agent.py` (184 tools registradas)
 - **Engine de playbooks:** `tools/playbook.py`
 - **Gate de confirmação:** `tools/risk.py`
 - **Firewall abstrato:** `tools/firewall.py` → backends em `tools/firewall_backends/`
@@ -106,6 +106,7 @@ interativa ou API REST.
 - **Autodiagnóstico (Frente F):** `tools/selftest.py` (`run_selftest()` — relatório read-only de prontidão: núcleo DB/auditoria/firewall, integrações, travas de segurança, operação NOC, defesa ativa). Tool `nexus_health`, `/health` no fast-path do NOC, script `scripts/nexus_doctor.py`.
 - **Simulador de tráfego (Frente G):** `tools/traffic_sim.py` (gera semanas de tráfego sintético com curva diurna+ruído nas MESMAS tabelas do monitor — exercita/valida baseline/anomalia/maturidade sem esperar dados reais; determinístico por seed). Script `scripts/simulate_traffic.py`. **Só dev/validação — não rodar no banco de produção.**
 - **Dashboard web (Frente H):** `tools/dashboard.py` (`dashboard_data()` read-only + página HTML self-contained, sem CDN). Endpoints em `api/server.py`: `GET /dashboard` (casca pública) e `GET /dashboard/data` (gated pelo token da API). Mostra assinantes/equipamentos/quedas/IPs bloqueados/eventos recentes/honeypots/ações pendentes; auto-refresh 15s.
+- **Integração SIEM (Frente I):** `tools/siem.py` (encaminha a trilha `events` a um SIEM externo, INCREMENTAL via cursor `siem_state`; modos `elastic`/`splunk` HEC/`webhook`; off por padrão `SIEM_MODE=off`; nunca avança o cursor sem confirmação do destino; NÃO loga sucesso — evitaria realimentação). Loop `siem_loop` em `main.py`; tools `siem_status`/`siem_forward_now`; linha no `selftest`.
 - **Testes:** `tests/` (68 arquivos, ~744 passando no sandbox; em algumas execuções 14 de socket/ping/recon falham conforme disponibilidade de socket)
 - **Base de conhecimento:** `workdir/apostilas/` (16 apostilas ingeridas via RAG)
 - **Docs detalhadas:** `/docs/` (ler só quando a tarefa exigir)
