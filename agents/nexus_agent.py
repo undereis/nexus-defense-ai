@@ -1671,6 +1671,16 @@ def send_telegram_test(message: str = "Teste de notificação da Nexus.") -> str
 
 
 @tool
+def setup_telegram_webhook(public_url: str) -> str:
+    """Registra o webhook do Telegram (controle bidirecional do NOC) apontando
+    para public_url, que deve ser HTTPS e terminar em /telegram/webhook (ex.:
+    https://noc.xfiber.com.br/telegram/webhook). Usa o TELEGRAM_WEBHOOK_SECRET
+    do .env. Depois disso, comandos enviados ao grupo autorizado chegam ao
+    agente. Exige a API (api/server.py) acessível publicamente via HTTPS."""
+    return telegram.set_webhook(public_url)
+
+
+@tool
 def threshold_tuning_overview() -> str:
     """Lista todos os thresholds que a Nexus já recalibrou automaticamente
     (valor aprendido vs base, motivo e quando) — visão geral do auto-ajuste."""
@@ -1944,6 +1954,7 @@ TOOLS = [
     check_devices_now,
     list_device_outages,
     send_telegram_test,
+    setup_telegram_webhook,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
