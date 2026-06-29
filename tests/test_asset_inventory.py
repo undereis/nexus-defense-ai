@@ -1,6 +1,5 @@
 """Testes para tools/asset_inventory.py — inventário automático de ativos."""
 
-import json
 import pytest
 
 from tools import asset_inventory, infrastructure

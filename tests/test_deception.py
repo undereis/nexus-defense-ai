@@ -6,7 +6,6 @@ GATE de segurança: um decoy nunca pode cair em infra real/crítica nem fora de
 honeynet.
 """
 
-import json
 
 import database.db as db
 import pytest

@@ -72,7 +72,7 @@ def correlate_and_escalate(ip: str) -> str | None:
         record_threat_flag(ip)
     log_event(
         "ioc_recon_escalated", ip,
-        f"Sinal de reconhecimento detectado (honeypot e/ou DPI) — escalado para reincidente conhecido",
+        "Sinal de reconhecimento detectado (honeypot e/ou DPI) — escalado para reincidente conhecido",
         action_taken="escalado",
     )
     return (

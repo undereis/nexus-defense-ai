@@ -23,7 +23,7 @@ interativa ou API REST.
 - **Testar:**         `venv/bin/pytest --tb=line -q`
 - **Testar (fase4):** `venv/bin/pytest tests/test_playbook.py tests/test_asn_block.py -v`
 - **Testar (fase5):** `venv/bin/pytest tests/test_infrastructure.py tests/test_asset_inventory.py tests/test_client_baseline.py tests/test_dns_monitor.py tests/test_brbos.py -v`
-- **Lint:**           `venv/bin/ruff check .` (requer `pip install ruff` — não vem no venv)
+- **Lint:**           `venv/bin/ruff check .` (config em `ruff.toml`; passa limpo)
 - **CLI:**            `venv/bin/python main.py`
 - **API:**            `venv/bin/uvicorn api.server:app --reload`
 

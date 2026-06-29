@@ -13,7 +13,6 @@ from database.db import (
     get_threat_history,
     list_repeat_offenders,
     log_event,
-    record_threat_flag,
     record_threat_isolation,
 )
 

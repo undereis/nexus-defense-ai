@@ -1,4 +1,3 @@
-import pytest
 
 from tools.cracking import crack_with_hashcat, crack_with_john
 

@@ -11,7 +11,6 @@ import importlib
 
 import pytest
 
-from tools import bgp_flowspec
 
 
 @pytest.fixture

@@ -1,0 +1,12 @@
+# Configuração do ruff para o Nexus Defense AI.
+# Lint documentado no CLAUDE.md: `venv/bin/ruff check .`
+
+extend-exclude = ["venv"]
+
+[lint.per-file-ignores]
+# agents/nexus_agent.py importa `network_devices` e `bgp_flowspec` no MEIO do
+# arquivo de propósito: cada um precisa existir antes do bloco de
+# `risk_gate.register_action(...)` que o referencia logo abaixo. Mover esses
+# imports para o topo separaria o import da sua razão de estar ali. E402
+# (import fora do topo) é intencional neste arquivo.
+"agents/nexus_agent.py" = ["E402"]
