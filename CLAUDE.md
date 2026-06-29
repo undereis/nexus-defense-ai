@@ -32,9 +32,15 @@ interativa ou API REST.
 - `_AUTO_CAP = 2` em `tools/playbook.py` é **hardcoded** — nível 3 (BGP FlowSpec)
   **nunca executa automaticamente**, independente do valor de `PLAYBOOK_AUTO_LEVEL`.
 - Toda ação de BGP e ASN block passa por gate de confirmação fora de banda (`tools/risk.py`).
-- `ALLOW_ACTIVE_EXPLOITATION`, `ALLOW_ASN_BLOCK`, `ALLOW_BGP_FLOWSPEC`, `ALLOW_BRBOS_BLOCK`
-  e `ALLOW_MALWARE_DETONATION` são **false** por padrão. Não ativar sem contexto explícito
-  do operador.
+- `ALLOW_ACTIVE_EXPLOITATION`, `ALLOW_ASN_BLOCK`, `ALLOW_BGP_FLOWSPEC`, `ALLOW_BRBOS_BLOCK`,
+  `ALLOW_MALWARE_DETONATION` e `SUBSCRIBER_BILLING_ENABLED` são **false** por padrão. Não
+  ativar sem contexto explícito do operador.
+- **Bloqueio de inadimplentes (Fase 8, `tools/billing.py`)** tem **cap de segurança**
+  hardcoded-by-config `SUBSCRIBER_BLOCK_MAX_BATCH` (padrão 50): um ciclo que bloquearia mais
+  que o cap de uma vez **não bloqueia ninguém** — só alerta (proteção contra erro na fonte
+  de cobrança derrubar a base inteira; mesma filosofia do `_AUTO_CAP`). Nunca remover esse
+  cap nem o guard `_is_safe_to_block` (recusa loopback/IP crítico próprio). Todo bloqueio é
+  idempotente (comentário `BLOQUEIO_INADIMPLENTE_<ip>`) e auditado.
 - Detonação de malware (`tools/malware_sandbox.py`) exige **duas travas independentes**:
   `ALLOW_MALWARE_DETONATION=true` **e** `MALWARE_SANDBOX_LAB_TOKEN` não-vazio (prova de
   lab isolado). Se faltar qualquer uma, recusa sem tocar na amostra. **Nunca** detonar em
@@ -80,7 +86,7 @@ interativa ou API REST.
 
 ## Onde está o quê
 
-- **Agente LangGraph:** `agents/nexus_agent.py` (162 tools registradas)
+- **Agente LangGraph:** `agents/nexus_agent.py` (177 tools registradas)
 - **Engine de playbooks:** `tools/playbook.py`
 - **Gate de confirmação:** `tools/risk.py`
 - **Firewall abstrato:** `tools/firewall.py` → backends em `tools/firewall_backends/`
@@ -94,6 +100,7 @@ interativa ou API REST.
 - **DNS por dentro (BrbOS):** `tools/brbos.py` (API REST do resolver: stats + RPZ block/unblock + rate limit; escrita gated)
 - **Contra-inteligência (Fase 6):** `tools/ttp_profile.py` (perfil de grupo por TTPs: clustering determinístico de atacantes por comportamento/ASN/técnica) · `tools/tool_fingerprint.py` (fingerprint da ferramenta do atacante: User-Agent/credenciais/comportamento → sqlmap/Nmap/Mirai/etc., por assinatura) · `tools/deception.py` (deception ativa: hosts-isca com banners falsos no espaço morto de honeynet + mapa falso + detecção de consumo; gate `_is_safe_decoy_ip` recusa infra real, só vive em honeynet declarada; defensivo, sem hack-back) · `tools/malware_sandbox.py` (sandbox de malware: análise ESTÁTICA + extração de IOC roda sempre, não executa nada; detonação DINÂMICA atrás de gate duplo `_detonation_preflight` — `ALLOW_MALWARE_DETONATION` + `MALWARE_SANDBOX_LAB_TOKEN` + backend — recusa fora de lab e, nesta versão, não há backend wirado: nenhum caminho de código executa a amostra). Read-only/registro-local.
 - **Memória da Nexus (Fase 7):** `memory/memory_store.py` (janela rolante das últimas N mensagens de conversa, recarregada no início da sessão) · `memory/fact_store.py` (memória de LONGO PRAZO: fatos/decisões duráveis na tabela `memory_facts`+FTS5, recuperados por relevância via `recall_facts`, soft-delete via `forget_fact`; os mais importantes são injetados no system prompt em `build_agent` — a Nexus "já sabe" sem reexplicação). NÃO guardar segredo cru (senha/token), só o fato.
-- **Testes:** `tests/` (65 arquivos, ~710 passando; 14 falham só no sandbox: socket/ping/recon)
+- **Operação de ISP / NOC (Fase 8):** `tools/billing.py` (bloqueio de inadimplentes: adaptador `BillingSource` — `LocalBillingSource` lê da tabela `subscribers`, `ExternalBillingSource` é stub p/ o sistema real de cobrança; bloqueia/desbloqueia via `tools/mikrotik.block_subscriber_ip/unblock_subscriber_ip` (API RouterOS, idempotente por comentário); `run_billing_cycle` com **cap de segurança** + proteção de infra — ver "Regras invioláveis") · `tools/device_monitor.py` (monitora Microkit/OLT/switch por ping; estado persistido em `monitored_devices.current_status` — sobrevive a restart; abre/baixa `device_outages` e notifica só nas transições) · `tools/telegram.py` (canal de notificação Telegram, aditivo ao `notify.py`; só outbound; token nunca commitado). Loops em `main.py`: `subscriber_billing_loop` (diário em `SUBSCRIBER_BLOCK_HOUR`) e `device_monitor_loop` (`DEVICE_MONITOR_INTERVAL`). Spec de origem + revisão em `automacao-rede-bloqueio-monitoramento.md`.
+- **Testes:** `tests/` (68 arquivos, ~744 passando no sandbox; em algumas execuções 14 de socket/ping/recon falham conforme disponibilidade de socket)
 - **Base de conhecimento:** `workdir/apostilas/` (16 apostilas ingeridas via RAG)
 - **Docs detalhadas:** `/docs/` (ler só quando a tarefa exigir)

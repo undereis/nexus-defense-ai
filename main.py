@@ -8,6 +8,7 @@ a origem do ataque.
 
 import threading
 import time
+from datetime import datetime
 
 from agents.nexus_agent import _detector
 from agents.runtime import ask_agent
@@ -20,6 +21,7 @@ from config import (
     AUDIT_CHECKPOINT_INTERVAL,
     AUTO_ISOLATE_MULTIPLIER,
     CREATOR_NAME,
+    DEVICE_MONITOR_INTERVAL,
     DNS_MONITOR_INTERVAL,
     DNS_PROBE_DOMAIN,
     DNS_SERVERS,
@@ -30,6 +32,8 @@ from config import (
     RECONCILE_POLL_INTERVAL,
     REPORT_INTERVAL_HOURS,
     RISK_SWEEP_INTERVAL,
+    SUBSCRIBER_BILLING_ENABLED,
+    SUBSCRIBER_BLOCK_HOUR,
     THREAT_FEED_REFRESH_INTERVAL_HOURS,
     WATCHDOG_INTERVAL,
 )
@@ -41,6 +45,8 @@ from database.db import (
 )
 from tools import client_risk, firewall, honeypot
 from tools.anomaly import record_current_sample
+from tools.billing import run_billing_cycle
+from tools.device_monitor import check_all_devices
 from tools.asset_inventory import scan_network as _inventory_scan
 from tools.client_baseline import check_all_client_anomalies, record_all_client_samples
 from tools.dns_monitor import (
@@ -337,6 +343,50 @@ def report_loop(stop_event: threading.Event):
         stop_event.wait(REPORT_INTERVAL_HOURS * 3600)
 
 
+# A cada quantos segundos o loop de cobrança verifica se já é a hora agendada
+# de rodar o ciclo diário. A guarda por data garante que roda no máximo uma vez
+# por dia, mesmo checando de 5 em 5 minutos.
+_BILLING_POLL_INTERVAL = 300
+
+
+def subscriber_billing_loop(stop_event: threading.Event):
+    """Roda o ciclo de cobrança (bloqueio de inadimplentes / reativação) uma
+    vez por dia, na hora SUBSCRIBER_BLOCK_HOUR. Só ativo se
+    SUBSCRIBER_BILLING_ENABLED. O ciclo em si tem cap de segurança (não
+    bloqueia lote anormal) — ver tools/billing.run_billing_cycle."""
+    if not SUBSCRIBER_BILLING_ENABLED:
+        return
+    last_run_date = None
+    while not stop_event.is_set():
+        try:
+            now = datetime.now()
+            if now.hour == SUBSCRIBER_BLOCK_HOUR and now.date() != last_run_date:
+                last_run_date = now.date()
+                _announce("Rodando ciclo de cobrança (bloqueio de inadimplentes)...")
+                summary = run_billing_cycle()
+                log_event("billing_cycle_loop", None, summary[:300], action_taken="executado")
+                _announce(summary)
+        except Exception as exc:
+            log_event("billing_loop_error", None, str(exc))
+        stop_event.wait(_BILLING_POLL_INTERVAL)
+
+
+def device_monitor_loop(stop_event: threading.Event):
+    """Ping periódico nos equipamentos cadastrados (Microkit/OLT/switch),
+    abrindo/baixando chamados de queda e notificando transições. Só roda se
+    DEVICE_MONITOR_INTERVAL > 0."""
+    if DEVICE_MONITOR_INTERVAL <= 0:
+        return
+    while not stop_event.is_set():
+        try:
+            transitions = check_all_devices()
+            if transitions:
+                _announce("Monitor de equipamentos: " + "; ".join(transitions))
+        except Exception as exc:
+            log_event("device_monitor_error", None, str(exc))
+        stop_event.wait(DEVICE_MONITOR_INTERVAL)
+
+
 def main():
     init_db()
     print("=== Nexus Defense AI ===")
@@ -386,6 +436,14 @@ def main():
         target=dns_monitor_loop, args=(stop_event,), daemon=True
     )
     dns_monitor_thread.start()
+    billing_thread = threading.Thread(
+        target=subscriber_billing_loop, args=(stop_event,), daemon=True
+    )
+    billing_thread.start()
+    device_monitor_thread = threading.Thread(
+        target=device_monitor_loop, args=(stop_event,), daemon=True
+    )
+    device_monitor_thread.start()
 
     try:
         while True:

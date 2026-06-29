@@ -11,9 +11,18 @@ from langgraph.prebuilt import create_react_agent
 
 from config import ANTHROPIC_API_KEY, CREATOR_NAME, MODEL_NAME
 from database.db import (
+    add_monitored_device as _db_add_monitored_device,
+    add_subscriber as _db_add_subscriber,
     get_findings_for_host,
+    list_device_outages as _db_list_device_outages,
+    list_monitored_devices as _db_list_monitored_devices,
     list_scanned_hosts,
+    list_subscriber_actions as _db_list_subscriber_actions,
+    list_subscribers as _db_list_subscribers,
     record_finding,
+    remove_monitored_device as _db_remove_monitored_device,
+    remove_subscriber as _db_remove_subscriber,
+    set_subscriber_invoice_status as _db_set_subscriber_invoice_status,
 )
 from tools import (
     access,
@@ -54,6 +63,7 @@ from tools import (
     web_injection,
 )
 from tools import asset_inventory, brbos, client_baseline, client_risk, dns_monitor, infrastructure, threshold_tuning, ttp_profile
+from tools import billing, device_monitor, telegram
 from tools import tool_fingerprint
 from tools import deception
 from tools import malware_sandbox
@@ -1489,6 +1499,177 @@ def reset_threshold_tuning(alert_type: str, scope: str = "global") -> str:
     return threshold_tuning.reset_threshold(alert_type, scope)
 
 
+# ---------- Operação de ISP / NOC (Fase 8) ----------
+
+@tool
+def add_subscriber(subscriber_id: str, ip_address: str, name: str = "",
+                   device_host: str = "", interface: str = "",
+                   invoice_status: str = "em_dia", days_overdue: int = 0) -> str:
+    """Cadastra/atualiza um assinante gerenciado para bloqueio de inadimplência.
+    subscriber_id é a chave (pode ser o id do sistema de cobrança); ip_address é
+    o IP do cliente a bloquear; device_host é o MikroTik que o controla.
+    invoice_status 'em_dia'/'pendente' + days_overdue alimentam a regra de
+    bloqueio. NÃO altera o status de conexão (isso é do ciclo de cobrança)."""
+    _db_add_subscriber(subscriber_id, ip_address, name=name, device_host=device_host,
+                       interface=interface, invoice_status=invoice_status,
+                       days_overdue=days_overdue)
+    return f"Assinante '{subscriber_id}' ({ip_address}) cadastrado/atualizado."
+
+
+@tool
+def remove_subscriber(subscriber_id: str) -> str:
+    """Remove um assinante do cadastro de gestão (não desbloqueia no firewall —
+    para isso use unblock_subscriber antes)."""
+    _db_remove_subscriber(subscriber_id)
+    return f"Assinante '{subscriber_id}' removido do cadastro."
+
+
+@tool
+def list_subscribers(status: str = "") -> str:
+    """Lista assinantes gerenciados. status opcional: 'ativo' ou
+    'bloqueado_inadimplencia' para filtrar."""
+    rows = _db_list_subscribers(status or None)
+    if not rows:
+        return "Nenhum assinante cadastrado." if not status else f"Nenhum assinante com status '{status}'."
+    lines = ["Assinantes:"]
+    for sid, name, ip, host, _iface, st, inv, days in rows:
+        lines.append(f"  [{sid}] {name or '—'} {ip} via {host or '—'} | conexão={st} | "
+                     f"fatura={inv} ({days}d atraso)")
+    return "\n".join(lines)
+
+
+@tool
+def set_subscriber_invoice_status(subscriber_id: str, invoice_status: str, days_overdue: int = 0) -> str:
+    """Marca a situação de fatura de um assinante: invoice_status 'pendente'
+    (em atraso) ou 'em_dia' (regularizado), com days_overdue. É isto que o ciclo
+    de cobrança lê para decidir bloquear (pendente + atraso) ou reativar (em_dia)."""
+    _db_set_subscriber_invoice_status(subscriber_id, invoice_status, days_overdue)
+    return f"Fatura de '{subscriber_id}' marcada como '{invoice_status}' ({days_overdue}d)."
+
+
+@tool
+def list_delinquent_subscribers(min_days: int = 0) -> str:
+    """Lista os assinantes atualmente inadimplentes (fatura pendente, atraso >=
+    min_days, ainda ativos) — quem o próximo ciclo bloquearia. min_days=0 usa o
+    padrão configurado (SUBSCRIBER_BLOCK_DAYS)."""
+    from config import SUBSCRIBER_BLOCK_DAYS
+    days = min_days or SUBSCRIBER_BLOCK_DAYS
+    source = billing.get_billing_source()
+    try:
+        delinquent = source.list_delinquent(days)
+    except Exception as exc:
+        return f"Não foi possível consultar a fonte de cobrança: {exc}"
+    if not delinquent:
+        return f"Nenhum inadimplente com atraso >= {days} dias."
+    lines = [f"Inadimplentes (atraso >= {days}d):"]
+    for s in delinquent:
+        lines.append(f"  [{s['subscriber_id']}] {s['ip_address']} — {s.get('days_overdue', '?')}d")
+    return "\n".join(lines)
+
+
+@tool
+def run_billing_cycle_now(dry_run: bool = True) -> str:
+    """Roda o ciclo de cobrança AGORA (fora do horário agendado): bloqueia
+    inadimplentes e reativa quem pagou. PADRÃO dry_run=True (só mostra o que
+    faria, sem tocar no firewall). Com dry_run=False executa de verdade —
+    sempre limitado pelo cap de segurança (não bloqueia lote anormalmente grande)."""
+    return billing.run_billing_cycle(dry_run=dry_run)
+
+
+@tool
+def block_subscriber(subscriber_id: str, reason: str = "bloqueio manual") -> str:
+    """Bloqueia um assinante específico no firewall do MikroTik, agora. Recusa
+    se o IP for de infraestrutura crítica. Idempotente (não duplica regra)."""
+    return billing.block_subscriber_by_id(subscriber_id, reason=reason)
+
+
+@tool
+def unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio manual") -> str:
+    """Desbloqueia um assinante específico no firewall do MikroTik, agora, e
+    reativa o status de conexão."""
+    return billing.unblock_subscriber_by_id(subscriber_id, reason=reason)
+
+
+@tool
+def list_subscriber_actions(subscriber_id: str = "", limit: int = 20) -> str:
+    """Histórico de bloqueios/desbloqueios (auditoria). subscriber_id opcional
+    para filtrar um assinante."""
+    rows = _db_list_subscriber_actions(subscriber_id or None, limit)
+    if not rows:
+        return "Nenhuma ação registrada."
+    lines = ["Ações de assinante (mais recentes primeiro):"]
+    for sid, action, reason, created_at in rows:
+        lines.append(f"  {created_at} [{sid}] {action} — {reason}")
+    return "\n".join(lines)
+
+
+@tool
+def add_monitored_device(device_id: str, ip: str, name: str = "", model: str = "",
+                         location: str = "", type: str = "mikrotik") -> str:
+    """Cadastra um equipamento (Microkit/OLT/switch) para monitoramento por ping.
+    type: 'mikrotik' | 'olt' | 'switch'. Quando o monitor está ligado
+    (DEVICE_MONITOR_INTERVAL>0), uma queda abre chamado e notifica; a volta baixa
+    o chamado e notifica normalização."""
+    _db_add_monitored_device(device_id, ip, name=name, model=model, location=location, type=type)
+    return f"Equipamento '{device_id}' ({ip}) cadastrado para monitoramento."
+
+
+@tool
+def remove_monitored_device(device_id: str) -> str:
+    """Remove um equipamento do monitoramento."""
+    _db_remove_monitored_device(device_id)
+    return f"Equipamento '{device_id}' removido do monitoramento."
+
+
+@tool
+def list_monitored_devices() -> str:
+    """Lista os equipamentos monitorados e o estado atual (online/offline/unknown)."""
+    rows = _db_list_monitored_devices()
+    if not rows:
+        return "Nenhum equipamento cadastrado para monitoramento."
+    lines = ["Equipamentos monitorados:"]
+    for did, name, ip, _model, location, dtype, enabled, status, last_change in rows:
+        en = "" if enabled else " (desabilitado)"
+        lines.append(f"  [{did}] {name or '—'} {ip} ({dtype}) — {status}{en}"
+                     + (f" | {location}" if location else ""))
+    return "\n".join(lines)
+
+
+@tool
+def check_devices_now() -> str:
+    """Faz uma varredura de ping AGORA em todos os equipamentos habilitados e
+    reporta as transições (quedas/recuperações) detectadas nesta passagem."""
+    transitions = device_monitor.check_all_devices()
+    if not transitions:
+        return "Varredura concluída — nenhuma transição (todos no mesmo estado de antes)."
+    return "Transições detectadas:\n  " + "\n  ".join(transitions)
+
+
+@tool
+def list_device_outages(status: str = "aberto", limit: int = 20) -> str:
+    """Lista chamados de queda de equipamento. status: 'aberto' (padrão) ou
+    'resolvido'; vazio para todos."""
+    rows = _db_list_device_outages(status or None, limit)
+    if not rows:
+        return f"Nenhum chamado de queda ({status or 'qualquer status'})."
+    lines = [f"Chamados de queda ({status or 'todos'}):"]
+    for did, ip, name, reason, st, opened_at, resolved_at in rows:
+        when = f"aberto {opened_at}" + (f", resolvido {resolved_at}" if resolved_at else "")
+        lines.append(f"  [{did}] {name or '—'} {ip} — {st} ({reason}) — {when}")
+    return "\n".join(lines)
+
+
+@tool
+def send_telegram_test(message: str = "Teste de notificação da Nexus.") -> str:
+    """Envia uma mensagem de teste pelo canal Telegram (Fase 8), para validar a
+    configuração TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID. Retorna se foi entregue."""
+    if not telegram.is_configured():
+        return ("Telegram não configurado — defina TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID "
+                "no .env (e reinicie o processo).")
+    ok = telegram.send_telegram(message)
+    return "Mensagem enviada ao Telegram." if ok else "Falha ao enviar ao Telegram (ver token/chat/rede)."
+
+
 @tool
 def threshold_tuning_overview() -> str:
     """Lista todos os thresholds que a Nexus já recalibrou automaticamente
@@ -1748,6 +1929,21 @@ TOOLS = [
     brbos_block_domain,
     brbos_unblock_domain,
     brbos_ratelimit_status,
+    add_subscriber,
+    remove_subscriber,
+    list_subscribers,
+    set_subscriber_invoice_status,
+    list_delinquent_subscribers,
+    run_billing_cycle_now,
+    block_subscriber,
+    unblock_subscriber,
+    list_subscriber_actions,
+    add_monitored_device,
+    remove_monitored_device,
+    list_monitored_devices,
+    check_devices_now,
+    list_device_outages,
+    send_telegram_test,
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
