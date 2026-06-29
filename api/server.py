@@ -17,7 +17,8 @@ from pydantic import BaseModel
 
 from agents.runtime import ask_agent
 from config import API_TOKEN, SLACK_SIGNING_SECRET
-from database.db import init_db
+from database.db import init_db, log_event
+from tools import telegram
 from tools.slack_verify import verify_signature
 
 app = FastAPI(title="Nexus Defense AI", version="0.1.0")
@@ -104,3 +105,50 @@ async def slack_command(request: Request, background_tasks: BackgroundTasks):
 
     background_tasks.add_task(_answer_and_callback, text, response_url)
     return {"response_type": "ephemeral", "text": f"🔄 Processando: \"{text}\"..."}
+
+
+def _telegram_answer(text: str, chat_id):
+    try:
+        reply = ask_agent(text)
+    except Exception as exc:
+        reply = f"Tive um erro processando isso: {exc}"
+    telegram.send_telegram_to(chat_id, reply)
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Webhook do Telegram para controle bidirecional do NOC (Fase 8). O
+    Telegram faz POST aqui a cada mensagem no bot/grupo. Duas barreiras de
+    segurança antes de processar: secret token (prova de origem) e chat_id
+    autorizado. O texto vira comando ao agente, que responde pelo Telegram.
+    Processa em background e devolve 200 na hora (o Telegram reenvia se não
+    receber 2xx rápido)."""
+    if not telegram.webhook_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook do Telegram não configurado (TELEGRAM_BOT_TOKEN + "
+            "TELEGRAM_CHAT_ID + TELEGRAM_WEBHOOK_SECRET).",
+        )
+    if not telegram.webhook_secret_ok(request.headers.get("X-Telegram-Bot-Api-Secret-Token")):
+        raise HTTPException(status_code=401, detail="Secret token inválido.")
+
+    try:
+        update = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corpo não é JSON válido.")
+
+    parsed = telegram.parse_update(update)
+    if not parsed:
+        return {"ok": True}  # update sem texto (foto/evento) — ignora sem erro
+
+    if not telegram.is_authorized_chat(parsed["chat_id"]):
+        log_event(
+            "telegram_unauthorized", None,
+            f"chat_id={parsed['chat_id']} from={parsed.get('from_id')}",
+            action_taken="ignorado",
+        )
+        return {"ok": True}
+
+    command = telegram.normalize_command(parsed["text"])
+    background_tasks.add_task(_telegram_answer, command, parsed["chat_id"])
+    return {"ok": True}

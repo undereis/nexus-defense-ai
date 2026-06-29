@@ -329,3 +329,11 @@ DEVICE_MONITOR_INTERVAL = int(os.getenv("DEVICE_MONITOR_INTERVAL", "0"))
 # notificações seguem pelo Slack/webhook como sempre. NUNCA commitar o token.
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Secret token do webhook do Telegram (controle bidirecional — operar o NOC pelo
+# grupo). É o valor passado em setWebhook(secret_token=...) e devolvido pelo
+# Telegram no header X-Telegram-Bot-Api-Secret-Token de cada update; o endpoint
+# /telegram/webhook recusa requisições que não batam. Vazio = webhook
+# bidirecional DESLIGADO (Telegram fica só outbound). Gere um valor aleatório
+# forte e NUNCA o commite. Defesa em profundidade junto da checagem de chat_id.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
