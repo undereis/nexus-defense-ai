@@ -4,8 +4,9 @@ scanner, brute-forcer, exploit kit, botnet — em vez de só saber que "um IP
 atacou".
 
 Fontes de sinal (todas já persistidas, nenhuma coleta nova):
-- User-Agent de disparos de honeytoken (honeytoken_triggers) e, quando o
-  Suricata está rodando, dos alertas de DPI (eve.json, best-effort).
+- User-Agent de disparos de honeytoken (honeytoken_triggers), do honeypot HTTP
+  principal (honeypot_hits — fatia 2B) e, quando o Suricata está rodando, dos
+  alertas de DPI (eve.json, best-effort).
 - Conjunto de credenciais tentadas no honeypot (honeypot_credentials) —
   dicionários de senha padrão denunciam a família (ex.: defaults do Mirai).
 - Comportamento de varredura (honeypot_hits): nº de portas distintas e
@@ -18,14 +19,14 @@ SINAL que o sustentou; sem sinal suficiente, devolve "indeterminado".
 
 Read-only: não dispara nenhuma ação, não passa por gate (é análise).
 
-Limitação conhecida: o User-Agent do honeypot HTTP principal ainda NÃO é
-persistido (ele é lido e descartado em tools/honeypot.py) — isso é a fatia
-2B. Hoje o UA vem de honeytoken_triggers e do DPI.
+Fatia 2B (Fase 6) FEITA: o User-Agent do honeypot HTTP principal agora é
+persistido (honeypot_hits.user_agent) e une-se a honeytoken_triggers + DPI.
 """
 
 from database.db import (
     get_attacker_user_agents_for_ip,
     get_honeypot_hits_chronological_for_ip,
+    get_honeypot_user_agents_for_ip,
     list_honeypot_credentials_for_ip,
 )
 from tools import dpi
@@ -175,7 +176,11 @@ def _dpi_user_agents_for_ip(ip: str) -> list[str]:
 
 def fingerprint_tools_for_ip(ip: str) -> dict:
     """Junta todos os sinais e classifica a(s) ferramenta(s) do IP."""
-    uas = list(dict.fromkeys(get_attacker_user_agents_for_ip(ip) + _dpi_user_agents_for_ip(ip)))
+    uas = list(dict.fromkeys(
+        get_attacker_user_agents_for_ip(ip)
+        + get_honeypot_user_agents_for_ip(ip)
+        + _dpi_user_agents_for_ip(ip)
+    ))
     creds = [(u, p) for (_port, _svc, u, p, _ts) in list_honeypot_credentials_for_ip(ip)]
     hits = get_honeypot_hits_chronological_for_ip(ip)
     distinct_ports = len({h[0] for h in hits})

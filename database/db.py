@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS honeypot_hits (
     ip TEXT NOT NULL,
     port INTEGER NOT NULL,
     service TEXT NOT NULL DEFAULT 'ssh',
+    user_agent TEXT,
     timestamp TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -503,6 +504,10 @@ def init_db():
         except sqlite3.OperationalError:
             pass  # coluna já existe
         try:
+            conn.execute("ALTER TABLE honeypot_hits ADD COLUMN user_agent TEXT")
+        except sqlite3.OperationalError:
+            pass  # coluna já existe
+        try:
             conn.execute("ALTER TABLE pending_actions ADD COLUMN confirmation_code TEXT NOT NULL DEFAULT ''")
         except sqlite3.OperationalError:
             pass  # coluna já existe
@@ -875,15 +880,16 @@ def get_latest_audit_checkpoint():
         ).fetchone()
 
 
-def record_honeypot_hit(ip: str, port: int, service: str = "ssh"):
+def record_honeypot_hit(ip: str, port: int, service: str = "ssh", user_agent: str | None = None):
     """Registra que um IP conectou na porta-armadilha — diferente da
     detecção por volume de tráfego, isto é praticamente prova direta de
     varredura/ataque, já que nenhum cliente legítimo deveria conectar
-    nessa porta."""
+    nessa porta. user_agent (quando o serviço é HTTP e o atacante mandou o
+    header) alimenta o fingerprint da ferramenta (tools/tool_fingerprint.py)."""
     with get_conn() as conn:
         conn.execute(
-            "INSERT INTO honeypot_hits (ip, port, service) VALUES (?, ?, ?)",
-            (ip, port, service),
+            "INSERT INTO honeypot_hits (ip, port, service, user_agent) VALUES (?, ?, ?, ?)",
+            (ip, port, service, user_agent or None),
         )
 
 
@@ -1052,8 +1058,8 @@ def list_honeypot_credentials_for_ip(ip: str, limit: int = 20):
 def get_attacker_user_agents_for_ip(ip: str) -> list[str]:
     """Retorna os User-Agents não-vazios que um IP já apresentou em disparos
     de honeytoken — sinal para fingerprint da ferramenta do atacante
-    (tools/tool_fingerprint.py). honeypot_hits não guarda UA; honeytoken_triggers
-    sim, então esta é a fonte persistida de UA hoje."""
+    (tools/tool_fingerprint.py). Fonte: honeytoken_triggers. Para os UAs vistos
+    no honeypot HTTP, ver get_honeypot_user_agents_for_ip (Fase 6, fatia 2B)."""
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT user_agent FROM honeytoken_triggers "
@@ -1062,6 +1068,26 @@ def get_attacker_user_agents_for_ip(ip: str) -> list[str]:
             (ip,),
         ).fetchall()
         return [r[0] for r in rows]
+
+
+def get_honeypot_user_agents_for_ip(ip: str) -> list[str]:
+    """Retorna os User-Agents distintos não-vazios que um IP apresentou no
+    honeypot HTTP (Fase 6, fatia 2B). Complementa get_attacker_user_agents_for_ip
+    (honeytoken) como fonte do fingerprint da ferramenta do atacante. Mantém a
+    ordem de chegada mais recente primeiro, sem repetir."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_agent FROM honeypot_hits "
+            "WHERE ip = ? AND user_agent IS NOT NULL AND user_agent != '' "
+            "ORDER BY id DESC",
+            (ip,),
+        ).fetchall()
+    seen, result = set(), []
+    for (ua,) in rows:
+        if ua not in seen:
+            seen.add(ua)
+            result.append(ua)
+    return result
 
 
 def add_knowledge_document(topic: str, title: str, source_url: str, content: str) -> int:

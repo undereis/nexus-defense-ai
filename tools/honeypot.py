@@ -102,8 +102,8 @@ def _isolate(ip: str, port: int, service: str):
     )
 
 
-def _process_hit(ip: str, port: int, service: str):
-    record_honeypot_hit(ip, port, service)
+def _process_hit(ip: str, port: int, service: str, user_agent: str | None = None):
+    record_honeypot_hit(ip, port, service, user_agent)
     total_hits = count_honeypot_hits(ip)
     log_event(
         "honeypot_hit", ip, f"service={service} port={port} total_hits={total_hits}",
@@ -200,12 +200,32 @@ Connection: close\r
 <html><body><h3>Invalid credentials.</h3></body></html>"""
 
 
-def _handle_http(conn: socket.socket, ip: str, port: int):
+# User-Agent do request HTTP — fonte rica para o fingerprint da ferramenta do
+# atacante (Fase 6, fatia 2B). Mesmo padrão usado em tools/honeytokens.py.
+_USER_AGENT_RE = re.compile(rb"User-Agent:\s*(.*?)\r\n", re.IGNORECASE)
+
+
+def _extract_user_agent(request: bytes) -> str | None:
+    """Extrai o valor do header User-Agent de um request HTTP cru, ou None se
+    ausente/vazio. Função pura (sem socket) — testável diretamente."""
+    match = _USER_AGENT_RE.search(request)
+    if not match:
+        return None
+    ua = match.group(1).decode(errors="replace").strip()
+    return ua or None
+
+
+def _handle_http(conn: socket.socket, ip: str, port: int) -> str | None:
+    """Atende a conexão HTTP do honeypot e RETORNA o User-Agent capturado (ou
+    None) para que _process_hit o persista junto do hit — antes da fatia 2B o
+    UA era lido implicitamente e descartado."""
+    user_agent = None
     try:
         conn.settimeout(10)
         request = b""
         conn_data = conn.recv(4096)
         request += conn_data
+        user_agent = _extract_user_agent(request)
 
         if request.startswith(b"POST"):
             body = request.split(b"\r\n\r\n", 1)[-1]
@@ -221,6 +241,7 @@ def _handle_http(conn: socket.socket, ip: str, port: int):
         pass
     finally:
         conn.close()
+    return user_agent
 
 
 def _handle_telnet(conn: socket.socket, ip: str, port: int):
@@ -391,11 +412,14 @@ _HANDLERS = {
 
 def _handle_connection(conn: socket.socket, addr: tuple, port: int, service: str):
     ip = addr[0]  # addr[1] é a porta de ORIGEM do cliente, não a do honeypot
+    user_agent = None
     try:
-        _HANDLERS[service](conn, ip, port)
+        # Handlers que capturam User-Agent (HTTP) o retornam; os demais
+        # devolvem None implicitamente — _process_hit persiste quando houver.
+        user_agent = _HANDLERS[service](conn, ip, port)
     finally:
         try:
-            _process_hit(ip, port, service)
+            _process_hit(ip, port, service, user_agent)
         except Exception as exc:
             log_event("honeypot_error", ip, str(exc))
 
