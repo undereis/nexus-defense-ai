@@ -11,7 +11,7 @@ infraestrutura (ex: Kubernetes), aplicado ao firewall.
 
 from dataclasses import dataclass
 
-from database.db import list_blocked_ips, record_blocked_ip
+from database.db import list_blocked_ips
 from tools import firewall
 
 

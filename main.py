@@ -161,7 +161,7 @@ def monitor_loop(stop_event: threading.Event):
             # conhecido) é isolada na hora, sem esperar round-trip de LLM.
             for ip in due_severe:
                 reason = (
-                    f"Auto-isolado: reincidente conhecido"
+                    "Auto-isolado: reincidente conhecido"
                     if ip in escalated
                     else f"Auto-isolado: conexões {counts[ip]}x acima do normal"
                 )

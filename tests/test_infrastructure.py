@@ -9,7 +9,6 @@ from tools import infrastructure
 def clean_db(tmp_path, monkeypatch):
     """Banco isolado por teste."""
     import database.db as db_module
-    from pathlib import Path
     db_path = tmp_path / "test.db"
     monkeypatch.setattr(db_module, "DB_PATH", db_path)
     db_module.init_db()

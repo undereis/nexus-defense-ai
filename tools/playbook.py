@@ -207,8 +207,8 @@ def evaluate_and_respond(ip: str, attack_type: str, metadata: dict | None = None
             lines.append(f"    → Nível 2: isolate_ip('{ip}') — isolamento local total")
         if determined_level >= 3:
             lines.append(
-                f"    → Nível 3: propose_bgp_flowspec_block — upstream block "
-                f"(REQUER gate de confirmação — nunca automático)"
+                "    → Nível 3: propose_bgp_flowspec_block — upstream block "
+                "(REQUER gate de confirmação — nunca automático)"
             )
         if determined_level >= 4 and effective_auto < 4:
             lines.append(
