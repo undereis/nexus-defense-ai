@@ -19,7 +19,7 @@ from database.db import (
     list_monitored_devices,
     list_subscribers,
 )
-from tools import billing, noc_report
+from tools import billing, noc_report, selftest
 
 _HELP = (
     "*Nexus NOC — comandos rápidos:*\n"
@@ -28,6 +28,7 @@ _HELP = (
     "/outages — chamados de queda abertos\n"
     "/subscribers — assinantes e situação\n"
     "/delinquent — inadimplentes que seriam bloqueados\n"
+    "/health — autodiagnóstico (núcleo, integrações, travas, NOC)\n"
     "/help — esta ajuda\n"
     "\nPara ações (bloquear/desbloquear assinante) ou perguntas livres, é só "
     "escrever em linguagem natural — eu te respondo."
@@ -42,6 +43,7 @@ _READ_COMMANDS = {
     "outages": "outages", "quedas": "outages", "chamados": "outages",
     "subscribers": "subscribers", "assinantes": "subscribers", "clientes": "subscribers",
     "delinquent": "delinquent", "inadimplentes": "delinquent",
+    "health": "health", "saude": "health", "diagnostico": "health", "status_geral": "health",
 }
 
 
@@ -118,4 +120,6 @@ def handle_command(text: str) -> str | None:
         return _format_subscribers()
     if action == "delinquent":
         return _format_delinquent()
+    if action == "health":
+        return selftest.run_selftest()
     return None

@@ -63,7 +63,7 @@ from tools import (
     web_injection,
 )
 from tools import asset_inventory, brbos, client_baseline, client_risk, dns_monitor, infrastructure, threshold_tuning, ttp_profile
-from tools import billing, device_monitor, noc_report, telegram
+from tools import billing, device_monitor, noc_report, selftest, telegram
 from tools import tool_fingerprint
 from tools import deception
 from tools import malware_sandbox
@@ -1690,6 +1690,16 @@ def setup_telegram_webhook(public_url: str) -> str:
 
 
 @tool
+def nexus_health() -> str:
+    """Autodiagnóstico de prontidão: relatório único do estado do núcleo (DB,
+    integridade da auditoria, backend de firewall), integrações (Mikrotik,
+    Telegram, Slack/webhook, BrbOS, feeds), travas de segurança, operação NOC
+    (Fase 8) e defesa ativa (honeypot, ações pendentes). Use para confirmar
+    'está tudo no ar e configurado?' antes de operar."""
+    return selftest.run_selftest()
+
+
+@tool
 def noc_status() -> str:
     """Painel consolidado de operação (NOC): assinantes (ativos/bloqueados/
     fatura pendente), saúde dos equipamentos (online/offline), chamados de
@@ -1982,6 +1992,7 @@ TOOLS = [
     send_telegram_test,
     telegram_status,
     setup_telegram_webhook,
+    nexus_health,
     noc_status,
     noc_status_pdf,
     list_pending_actions,
