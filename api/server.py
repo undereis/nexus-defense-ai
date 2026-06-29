@@ -12,13 +12,14 @@ from urllib.parse import parse_qs
 
 import requests
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Security
+from fastapi.responses import HTMLResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from agents.runtime import ask_agent
 from config import API_TOKEN, SLACK_SIGNING_SECRET
 from database.db import init_db, log_event
-from tools import noc_commands, telegram
+from tools import dashboard, noc_commands, telegram
 from tools.slack_verify import verify_signature
 
 app = FastAPI(title="Nexus Defense AI", version="0.1.0")
@@ -58,6 +59,19 @@ def on_startup():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page():
+    """Casca HTML do dashboard read-only (NOC + segurança). Os dados em si
+    vêm de /dashboard/data, protegido por token; esta página só pede o token
+    e renderiza."""
+    return dashboard.dashboard_html()
+
+
+@app.get("/dashboard/data", dependencies=[Depends(require_token)])
+def dashboard_data():
+    return dashboard.dashboard_data()
 
 
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_token)])
