@@ -60,17 +60,42 @@ def _send_via_webhook(title: str, message: str) -> bool:
         return False
 
 
-def send_notification(title: str, message: str) -> bool:
-    """Envia uma notificação pelo canal disponível (Slack API primeiro,
-    webhook genérico como alternativa). Retorna True se algum dos dois
-    enviou com sucesso, False se nada está configurado ou ambos falharam."""
-    if SLACK_BOT_TOKEN and SLACK_CHANNEL_ID:
-        if _send_via_slack_api(title, message):
-            return True
-    if NOTIFY_WEBHOOK_URL:
-        return _send_via_webhook(title, message)
+def _send_via_telegram(title: str, message: str) -> bool:
+    """Envia pelo Telegram (Fase 8), se configurado. Import lazy para não
+    criar dependência de carga entre os módulos e manter o telegram opcional."""
+    try:
+        from tools import telegram
+
+        if telegram.is_configured():
+            return telegram.send_telegram(f"*{title}*\n{message}")
+    except Exception:
+        return False
     return False
 
 
+def send_notification(title: str, message: str) -> bool:
+    """Envia uma notificação por TODOS os canais configurados (Slack API,
+    webhook genérico, Telegram). Retorna True se ALGUM canal enviou com
+    sucesso, False se nada está configurado ou todos falharam. Tenta todos
+    (não para no primeiro sucesso) para que uma notificação importante chegue
+    em cada destino que o operador configurou."""
+    sent = False
+    if SLACK_BOT_TOKEN and SLACK_CHANNEL_ID:
+        sent = _send_via_slack_api(title, message) or sent
+    if NOTIFY_WEBHOOK_URL:
+        sent = _send_via_webhook(title, message) or sent
+    sent = _send_via_telegram(title, message) or sent
+    return sent
+
+
 def is_configured() -> bool:
-    return bool((SLACK_BOT_TOKEN and SLACK_CHANNEL_ID) or NOTIFY_WEBHOOK_URL)
+    if SLACK_BOT_TOKEN and SLACK_CHANNEL_ID:
+        return True
+    if NOTIFY_WEBHOOK_URL:
+        return True
+    try:
+        from tools import telegram
+
+        return telegram.is_configured()
+    except Exception:
+        return False

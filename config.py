@@ -295,3 +295,37 @@ MALWARE_SANDBOX_TIMEOUT_SECONDS = int(os.getenv("MALWARE_SANDBOX_TIMEOUT_SECONDS
 # (confirm=True). Este toggle só serve para um futuro loop autônomo aplicar
 # dentro dos limites; nesta versão nenhum loop aplica sozinho.
 ALLOW_THRESHOLD_AUTOTUNE = os.getenv("ALLOW_THRESHOLD_AUTOTUNE", "false").lower() == "true"
+
+# --- Operação de ISP / NOC (Fase 8): inadimplência + monitoramento ---
+# Bloqueio de inadimplentes: liga o loop diário que bloqueia assinantes em
+# atraso e reativa quem pagou. Off por padrão (opt-in para o subsistema
+# iniciar); uma vez ligado, age automaticamente no horário — mas SEMPRE
+# limitado pelo cap de segurança abaixo.
+SUBSCRIBER_BILLING_ENABLED = os.getenv("SUBSCRIBER_BILLING_ENABLED", "false").lower() == "true"
+
+# Hora do dia (0-23) em que o ciclo de cobrança roda. Dias mínimos de atraso
+# para considerar um assinante inadimplente (= DIAS_PARA_BLOQUEIO do spec).
+SUBSCRIBER_BLOCK_HOUR = int(os.getenv("SUBSCRIBER_BLOCK_HOUR", "8"))
+SUBSCRIBER_BLOCK_DAYS = int(os.getenv("SUBSCRIBER_BLOCK_DAYS", "5"))
+
+# CAP DE SEGURANÇA (filosofia do _AUTO_CAP): um ciclo que tentaria bloquear
+# MAIS que isto de uma vez NÃO bloqueia ninguém — só alerta. Protege contra
+# um erro na fonte de cobrança derrubar a base inteira. Para um bloqueio
+# massivo legítimo, suba este valor deliberadamente.
+SUBSCRIBER_BLOCK_MAX_BATCH = int(os.getenv("SUBSCRIBER_BLOCK_MAX_BATCH", "50"))
+
+# Fonte dos dados de inadimplência: 'local' (tabela subscribers no nexus.db,
+# funciona já hoje) ou 'external' (adaptador para o sistema real de cobrança,
+# ainda não wirado — retorna "não configurado").
+BILLING_SOURCE = os.getenv("BILLING_SOURCE", "local")
+
+# Monitoramento de equipamentos (Microkit/OLT/switch) por ping. Intervalo em
+# segundos do loop. 0 (padrão) = desligado, igual DNS_MONITOR_INTERVAL — os
+# equipamentos precisam ser cadastrados antes (add_monitored_device).
+DEVICE_MONITOR_INTERVAL = int(os.getenv("DEVICE_MONITOR_INTERVAL", "0"))
+
+# Telegram — canal de notificação adicional (aditivo ao Slack/webhook). Bot
+# token (via @BotFather) + chat/grupo de destino. Vazio = Telegram desligado,
+# notificações seguem pelo Slack/webhook como sempre. NUNCA commitar o token.
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")

@@ -29,6 +29,11 @@ from database.db import log_event
 _ALLOWED_CHAINS = {"input", "forward", "output"}
 _ALLOWED_ACTIONS = {"accept", "drop", "reject", "log", "passthrough"}
 
+# Prefixo do comentário usado para marcar (e depois localizar) as regras de
+# bloqueio de assinante inadimplente (Fase 8). O comentário é a chave de
+# dedup/remoção — o roteador não tem outro identificador estável por IP.
+_SUBSCRIBER_BLOCK_PREFIX = "BLOQUEIO_INADIMPLENTE_"
+
 
 def _ssl_wrapper(sock):
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -180,6 +185,55 @@ def remove_firewall_rule(rule_id: str) -> str:
         api.close()
     log_event("mikrotik_firewall_remove_confirmed", None, f"rule_id={rule_id}", action_taken="confirmado")
     return f"Regra {rule_id} removida."
+
+
+@_safe
+def block_subscriber_ip(ip_cliente: str) -> str:
+    """Bloqueio de inadimplente (Fase 8): adiciona uma regra forward/drop por
+    src-address, marcada com o comentário-chave. IDEMPOTENTE — se já existe
+    uma regra com esse comentário, não readiciona (evita acúmulo de regras
+    duplicadas a cada ciclo de cobrança)."""
+    comment = f"{_SUBSCRIBER_BLOCK_PREFIX}{ip_cliente}"
+    api = _connect()
+    try:
+        existing = [
+            r for r in api(cmd="/ip/firewall/filter/print")
+            if r.get("comment") == comment
+        ]
+        if existing:
+            return f"IP {ip_cliente} já estava bloqueado (regra existente, nada a fazer)."
+        log_event("subscriber_block", ip_cliente, f"comment={comment}", action_taken="executando")
+        list(api(
+            cmd="/ip/firewall/filter/add",
+            chain="forward", action="drop", comment=comment,
+            **{"src-address": ip_cliente},
+        ))
+    finally:
+        api.close()
+    log_event("subscriber_block_confirmed", ip_cliente, f"comment={comment}", action_taken="bloqueado")
+    return f"IP {ip_cliente} bloqueado (forward/drop)."
+
+
+@_safe
+def unblock_subscriber_ip(ip_cliente: str) -> str:
+    """Desbloqueio de inadimplente (Fase 8): remove TODA regra marcada com o
+    comentário-chave do IP. Idempotente — se não há regra, apenas reporta."""
+    comment = f"{_SUBSCRIBER_BLOCK_PREFIX}{ip_cliente}"
+    api = _connect()
+    try:
+        rules = [
+            r for r in api(cmd="/ip/firewall/filter/print")
+            if r.get("comment") == comment
+        ]
+        if not rules:
+            return f"Nenhuma regra de bloqueio encontrada para {ip_cliente} (nada a fazer)."
+        log_event("subscriber_unblock", ip_cliente, f"comment={comment} regras={len(rules)}", action_taken="executando")
+        for r in rules:
+            list(api(cmd="/ip/firewall/filter/remove", **{".id": r[".id"]}))
+    finally:
+        api.close()
+    log_event("subscriber_unblock_confirmed", ip_cliente, f"comment={comment}", action_taken="desbloqueado")
+    return f"IP {ip_cliente} desbloqueado ({len(rules)} regra(s) removida(s))."
 
 
 @_safe

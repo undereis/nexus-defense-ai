@@ -415,6 +415,66 @@ CREATE TABLE IF NOT EXISTS tuned_thresholds (
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(alert_type, scope)
 );
+
+-- Operação de ISP / NOC (Fase 8): assinantes gerenciados, equipamentos
+-- monitorados e chamados de queda. Distinto de client_profiles (baseline de
+-- tráfego por CIDR) — aqui o foco é cobrança/bloqueio e uptime de hardware.
+
+-- Assinantes gerenciados (clientes finais com IP + roteador de borda). A
+-- fonte local de cobrança mora aqui (invoice_status/days_overdue); um
+-- adaptador externo pode sobrescrever esses campos no futuro.
+CREATE TABLE IF NOT EXISTS subscribers (
+    subscriber_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    ip_address TEXT NOT NULL,
+    device_host TEXT NOT NULL DEFAULT '',   -- IP/host do MikroTik que controla o assinante
+    interface TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'ativo',    -- 'ativo' | 'bloqueado_inadimplencia'
+    invoice_status TEXT NOT NULL DEFAULT 'em_dia',  -- 'em_dia' | 'pendente'
+    days_overdue INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Auditoria de cada bloqueio/desbloqueio de assinante (equivale a
+-- logs_automacao do spec). A trilha hash-chain em `events` também registra.
+CREATE TABLE IF NOT EXISTS subscriber_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscriber_id TEXT NOT NULL,
+    action TEXT NOT NULL,        -- 'bloqueado' | 'desbloqueado' | 'bloqueio_recusado' | ...
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_subscriber_actions_sub ON subscriber_actions(subscriber_id);
+
+-- Equipamentos monitorados por ping (Microkit/OLT/switch). O estado atual
+-- fica persistido (current_status) para o monitor não depender de um set em
+-- memória — sobrevive a restart (corrige o bug do spec).
+CREATE TABLE IF NOT EXISTS monitored_devices (
+    device_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    location TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL DEFAULT 'mikrotik',   -- 'mikrotik' | 'olt' | 'switch'
+    enabled INTEGER NOT NULL DEFAULT 1,
+    current_status TEXT NOT NULL DEFAULT 'unknown',  -- 'online' | 'offline' | 'unknown'
+    last_change_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Chamados de queda de equipamento (equivale a alertas_rede do spec).
+CREATE TABLE IF NOT EXISTS device_outages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    ip TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'aberto',   -- 'aberto' | 'resolvido'
+    opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_device_outages_dev ON device_outages(device_id);
 """
 
 
@@ -1898,5 +1958,231 @@ def list_brbos_dns_stats(host: str | None = None, limit: int = 50):
         return conn.execute(
             "SELECT host, raw_json, total_req, hit, miss, nxdomain, collected_at "
             "FROM brbos_dns_stats ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+# ---------- Operação de ISP / NOC (Fase 8): assinantes ----------
+
+def add_subscriber(subscriber_id: str, ip_address: str, name: str = "",
+                   device_host: str = "", interface: str = "",
+                   invoice_status: str = "em_dia", days_overdue: int = 0):
+    """Cadastra/atualiza um assinante gerenciado. INSERT OR REPLACE preserva o
+    subscriber_id como chave; mexer no status fica a cargo das funções de
+    bloqueio/cobrança, então aqui não tocamos em `status` ao reinserir."""
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT status FROM subscribers WHERE subscriber_id = ?", (subscriber_id,)
+        ).fetchone()
+        status = existing[0] if existing else "ativo"
+        conn.execute(
+            "INSERT OR REPLACE INTO subscribers "
+            "(subscriber_id, name, ip_address, device_host, interface, status, "
+            " invoice_status, days_overdue, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+            (subscriber_id, name, ip_address, device_host, interface, status,
+             invoice_status, days_overdue),
+        )
+
+
+def remove_subscriber(subscriber_id: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM subscribers WHERE subscriber_id = ?", (subscriber_id,))
+
+
+def list_subscribers(status: str | None = None):
+    """Retorna (subscriber_id, name, ip_address, device_host, interface, status,
+    invoice_status, days_overdue)."""
+    cols = ("subscriber_id, name, ip_address, device_host, interface, status, "
+            "invoice_status, days_overdue")
+    with get_conn() as conn:
+        if status:
+            return conn.execute(
+                f"SELECT {cols} FROM subscribers WHERE status = ? ORDER BY subscriber_id",
+                (status,),
+            ).fetchall()
+        return conn.execute(
+            f"SELECT {cols} FROM subscribers ORDER BY subscriber_id"
+        ).fetchall()
+
+
+def get_subscriber(subscriber_id: str):
+    """Retorna (subscriber_id, name, ip_address, device_host, interface, status,
+    invoice_status, days_overdue) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT subscriber_id, name, ip_address, device_host, interface, status, "
+            "invoice_status, days_overdue FROM subscribers WHERE subscriber_id = ?",
+            (subscriber_id,),
+        ).fetchone()
+
+
+def set_subscriber_invoice_status(subscriber_id: str, invoice_status: str, days_overdue: int = 0):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE subscribers SET invoice_status = ?, days_overdue = ?, "
+            "updated_at = datetime('now') WHERE subscriber_id = ?",
+            (invoice_status, days_overdue, subscriber_id),
+        )
+
+
+def set_subscriber_status(subscriber_id: str, status: str):
+    """Atualiza só o estado de conexão (ativo / bloqueado_inadimplencia)."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE subscribers SET status = ?, updated_at = datetime('now') "
+            "WHERE subscriber_id = ?",
+            (status, subscriber_id),
+        )
+
+
+def list_delinquent_subscribers(min_days: int):
+    """Assinantes com fatura pendente, atraso >= min_days e ainda ativos —
+    candidatos a bloqueio. Retorna (subscriber_id, name, ip_address,
+    device_host, interface, days_overdue)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT subscriber_id, name, ip_address, device_host, interface, days_overdue "
+            "FROM subscribers WHERE invoice_status = 'pendente' AND days_overdue >= ? "
+            "AND status = 'ativo' ORDER BY days_overdue DESC",
+            (min_days,),
+        ).fetchall()
+
+
+def list_reactivatable_subscribers():
+    """Assinantes bloqueados por inadimplência que já regularizaram (fatura em
+    dia) — candidatos a desbloqueio. Retorna (subscriber_id, name, ip_address,
+    device_host, interface)."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT subscriber_id, name, ip_address, device_host, interface "
+            "FROM subscribers WHERE status = 'bloqueado_inadimplencia' "
+            "AND invoice_status = 'em_dia' ORDER BY subscriber_id"
+        ).fetchall()
+
+
+def record_subscriber_action(subscriber_id: str, action: str, reason: str = ""):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO subscriber_actions (subscriber_id, action, reason) "
+            "VALUES (?, ?, ?)",
+            (subscriber_id, action, reason),
+        )
+
+
+def list_subscriber_actions(subscriber_id: str | None = None, limit: int = 50):
+    """Retorna (subscriber_id, action, reason, created_at)."""
+    with get_conn() as conn:
+        if subscriber_id:
+            return conn.execute(
+                "SELECT subscriber_id, action, reason, created_at FROM subscriber_actions "
+                "WHERE subscriber_id = ? ORDER BY id DESC LIMIT ?",
+                (subscriber_id, limit),
+            ).fetchall()
+        return conn.execute(
+            "SELECT subscriber_id, action, reason, created_at FROM subscriber_actions "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+
+
+# ---------- Operação de ISP / NOC (Fase 8): equipamentos monitorados ----------
+
+def add_monitored_device(device_id: str, ip: str, name: str = "", model: str = "",
+                         location: str = "", type: str = "mikrotik", enabled: bool = True):
+    """Cadastra/atualiza um equipamento a monitorar. Preserva o estado atual
+    (current_status/last_change_at) ao reinserir — o monitor é dono disso."""
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT current_status, last_change_at FROM monitored_devices WHERE device_id = ?",
+            (device_id,),
+        ).fetchone()
+        current_status, last_change_at = existing if existing else ("unknown", None)
+        conn.execute(
+            "INSERT OR REPLACE INTO monitored_devices "
+            "(device_id, name, ip, model, location, type, enabled, current_status, last_change_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (device_id, name, ip, model, location, type, 1 if enabled else 0,
+             current_status, last_change_at),
+        )
+
+
+def remove_monitored_device(device_id: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM monitored_devices WHERE device_id = ?", (device_id,))
+
+
+def list_monitored_devices(only_enabled: bool = False):
+    """Retorna (device_id, name, ip, model, location, type, enabled,
+    current_status, last_change_at)."""
+    cols = ("device_id, name, ip, model, location, type, enabled, "
+            "current_status, last_change_at")
+    with get_conn() as conn:
+        if only_enabled:
+            return conn.execute(
+                f"SELECT {cols} FROM monitored_devices WHERE enabled = 1 ORDER BY device_id"
+            ).fetchall()
+        return conn.execute(
+            f"SELECT {cols} FROM monitored_devices ORDER BY device_id"
+        ).fetchall()
+
+
+def get_monitored_device(device_id: str):
+    """Retorna (device_id, name, ip, model, location, type, enabled,
+    current_status, last_change_at) ou None."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT device_id, name, ip, model, location, type, enabled, "
+            "current_status, last_change_at FROM monitored_devices WHERE device_id = ?",
+            (device_id,),
+        ).fetchone()
+
+
+def set_device_status(device_id: str, status: str):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE monitored_devices SET current_status = ?, "
+            "last_change_at = datetime('now') WHERE device_id = ?",
+            (status, device_id),
+        )
+
+
+def open_device_outage(device_id: str, ip: str = "", name: str = "", reason: str = ""):
+    """Abre um chamado de queda se ainda não houver um aberto para o device."""
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM device_outages WHERE device_id = ? AND status = 'aberto'",
+            (device_id,),
+        ).fetchone()
+        if existing:
+            return existing[0]
+        cur = conn.execute(
+            "INSERT INTO device_outages (device_id, ip, name, reason) VALUES (?, ?, ?, ?)",
+            (device_id, ip, name, reason),
+        )
+        return cur.lastrowid
+
+
+def resolve_device_outage(device_id: str):
+    """Marca como resolvido o chamado aberto do device (se houver)."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE device_outages SET status = 'resolvido', resolved_at = datetime('now') "
+            "WHERE device_id = ? AND status = 'aberto'",
+            (device_id,),
+        )
+
+
+def list_device_outages(status: str | None = None, limit: int = 50):
+    """Retorna (device_id, ip, name, reason, status, opened_at, resolved_at)."""
+    cols = "device_id, ip, name, reason, status, opened_at, resolved_at"
+    with get_conn() as conn:
+        if status:
+            return conn.execute(
+                f"SELECT {cols} FROM device_outages WHERE status = ? ORDER BY id DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        return conn.execute(
+            f"SELECT {cols} FROM device_outages ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
