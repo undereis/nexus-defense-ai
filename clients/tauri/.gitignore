@@ -1,0 +1,12 @@
+# dependências e builds do cliente Tauri (não versionar)
+node_modules
+dist
+dist-ssr
+*.local
+
+# Rust / Tauri
+src-tauri/target
+src-tauri/gen
+
+# ícones gerados (rode `npm run tauri icon <png>` localmente)
+src-tauri/icons
