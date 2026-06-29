@@ -109,6 +109,50 @@ def parse_update(update: dict) -> dict | None:
     return {"chat_id": chat_id, "text": text, "from_id": frm.get("id")}
 
 
+def get_webhook_info() -> str:
+    """Diagnóstico: valida o token (getMe) e mostra o estado do webhook
+    (getWebhookInfo). O campo decisivo é o ÚLTIMO ERRO de entrega — é ele que
+    diz se o Telegram está conseguindo alcançar o endpoint bidirecional. Usado
+    para responder 'o Telegram está respondendo?'."""
+    if not TELEGRAM_BOT_TOKEN:
+        return "Telegram não configurado (TELEGRAM_BOT_TOKEN vazio no .env)."
+    base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    lines = []
+    try:
+        me = requests.get(f"{base}/getMe", timeout=_TIMEOUT_SECONDS).json()
+    except (requests.RequestException, ValueError) as exc:
+        return f"Falha ao falar com a API do Telegram: {exc}"
+    if not me.get("ok"):
+        return f"Token inválido? getMe falhou: {me.get('description', me)}"
+    bot = me["result"]
+    lines.append(f"Bot: @{bot.get('username')} (id {bot.get('id')}) — token OK.")
+    lines.append(f"Chat alvo (TELEGRAM_CHAT_ID): {TELEGRAM_CHAT_ID or '(vazio — defina para enviar)'}")
+
+    try:
+        info = requests.get(f"{base}/getWebhookInfo", timeout=_TIMEOUT_SECONDS).json()
+    except (requests.RequestException, ValueError) as exc:
+        lines.append(f"getWebhookInfo falhou: {exc}")
+        return "\n".join(lines)
+    r = info.get("result", {}) if info.get("ok") else {}
+    url = r.get("url") or ""
+    if url:
+        lines.append(f"Webhook (bidirecional) registrado em: {url}")
+        lines.append(f"Updates pendentes na fila do Telegram: {r.get('pending_update_count', 0)}")
+        if r.get("last_error_message"):
+            lines.append(
+                f"⚠ ÚLTIMO ERRO DE ENTREGA: {r['last_error_message']} — o Telegram NÃO está "
+                "conseguindo alcançar a API. Confira HTTPS válido, a URL e o secret token."
+            )
+        else:
+            lines.append("Sem erros de entrega recentes — bidirecional saudável. ✅")
+    else:
+        lines.append(
+            "Webhook NÃO registrado → bidirecional desligado (só envio funciona). Para ligar: "
+            "exponha a API por HTTPS e rode setup_telegram_webhook(url)."
+        )
+    return "\n".join(lines)
+
+
 def set_webhook(public_url: str) -> str:
     """Registra o webhook no Telegram (setWebhook) apontando para public_url,
     já com o secret token configurado. public_url deve ser HTTPS e terminar em
