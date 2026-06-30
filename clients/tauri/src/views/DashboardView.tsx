@@ -11,8 +11,11 @@ import { NexusInsights } from "../components/NexusInsights";
 import { QuickActions } from "../components/QuickActions";
 import { EventsTimeline } from "../components/EventsTimeline";
 import { BlockedIpsTable, OutagesTable } from "../components/Tables";
+import { LabReadinessPanel } from "../components/LabReadinessPanel";
+import { useEnvironment } from "../lib/environment";
 
 export function DashboardView() {
+  const { mode } = useEnvironment();
   return (
     <Gate>
       {(d) => (
@@ -27,12 +30,16 @@ export function DashboardView() {
             <MetricCard label="Eventos 24h" value={d.events_24h} icon={Activity} tone="info" />
           </div>
 
+          <LabReadinessPanel />
+
           <div className="grid cols-main">
             <div className="grid" style={{ gap: 16 }}>
               <DataPanel title="Mapa de Ameaças" icon={Radar}>
                 <ThreatMapPlaceholder data={d} />
                 <div className="muted-note" style={{ marginTop: 8 }}>
-                  Visualização ilustrativa — as posições são esquemáticas; os IPs plotados são reais (blocklist da API).
+                  {mode === "lab"
+                    ? "Modo Laboratório: nós de demonstração marcados como “Simulação visual”. IPs reais (blocklist da API) aparecem rotulados; nenhum IP/país é inventado."
+                    : "Posições esquemáticas (sem GeoIP na API). Os IPs plotados são reais — da blocklist da API."}
                 </div>
               </DataPanel>
               <DataPanel title="Centro de Operações" icon={Zap}>

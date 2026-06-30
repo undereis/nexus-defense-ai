@@ -3,6 +3,7 @@
 // devolve, apresentada como recomendação VISUAL (nunca executa ação).
 
 import { Overview, Severity, classifyIp, relativeTime, severityOf } from "./format";
+import type { EnvMode } from "./environment";
 
 export interface Insight { severity: Severity; title: string; text: string; }
 
@@ -98,6 +99,49 @@ export function computeInsights(d: Overview): Insight[] {
       severity: "ok",
       title: "Operação estável",
       text: "Sem inconsistências ou incidentes ativos nos dados atuais.",
+    });
+  }
+
+  return out;
+}
+
+// Insights de PRONTIDÃO/PREPARAÇÃO — diferenciam achados reais da ausência de
+// laboratório e do modo de visualização. Informativos e visuais; não executam
+// nada. Acrescentam-se aos insights operacionais, ao final.
+export function readinessInsights(d: Overview, mode: EnvMode): Insight[] {
+  const out: Insight[] = [];
+
+  if (d.devices.total === 0) {
+    out.push({
+      severity: "info",
+      title: "Nenhum hardware real conectado ainda",
+      text: "Monitoração física aguardando laboratório/equipamentos. A interface está pronta para conectar quando o hardware chegar.",
+    });
+  }
+
+  out.push({
+    severity: "info",
+    title: "Mapa operando em modo ilustrativo",
+    text: "Sem geolocalização real na API: as posições são esquemáticas. Os IPs plotados, quando houver, são reais.",
+  });
+
+  if (mode === "lab") {
+    out.push({
+      severity: "warn",
+      title: "Modo Laboratório ativo",
+      text: "Visualizações de demonstração estão marcadas como “Simulação visual”. As métricas seguem reais quando vindas da API.",
+    });
+  } else if (mode === "replay") {
+    out.push({
+      severity: "info",
+      title: "Nenhum replay disponível na API atual",
+      text: "Recurso preparado conceitualmente — será habilitado quando houver endpoint/dados de replay.",
+    });
+  } else {
+    out.push({
+      severity: "info",
+      title: "Dados de eventos vêm da API real",
+      text: "A telemetria exibida é a retornada pelo motor Python; nada é fabricado.",
     });
   }
 
