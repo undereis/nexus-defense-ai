@@ -109,6 +109,17 @@ def _process_hit(ip: str, port: int, service: str, user_agent: str | None = None
         "honeypot_hit", ip, f"service={service} port={port} total_hits={total_hits}",
         action_taken="detectado",
     )
+    # Auto-incidente (opt-in via AUTO_INCIDENT_ENABLED): hit em honeypot é sinal
+    # inequívoco de ataque. Idempotente por IP/tipo e fail-safe — jamais derruba
+    # o processamento do honeypot.
+    try:
+        from tools import incidents
+
+        incidents.auto_open_from_event(
+            "honeypot", ip, detail=f"hit em {service}:{port} (total {total_hits})", severity="high"
+        )
+    except Exception:
+        pass
     _isolate(ip, port, service)
 
 

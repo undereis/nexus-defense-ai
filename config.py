@@ -68,6 +68,12 @@ NEXUS_ROLE_TOKENS = os.getenv("NEXUS_ROLE_TOKENS", "")
 # endurece: só ativos explicitamente cadastrados e no escopo passam.
 REQUIRE_ASSET_AUTHORIZATION = os.getenv("REQUIRE_ASSET_AUTHORIZATION", "false").lower() == "true"
 
+# Auto-incidente: abre um incidente automaticamente em sinais inequívocos de
+# ataque (ex.: hit em honeypot). Idempotente (reaproveita o incidente ativo do
+# mesmo IP/tipo, só anota) e fail-safe. false (padrão) = não abre sozinho — o
+# operador abre via open_incident. Ligar é uma decisão deliberada de ruído.
+AUTO_INCIDENT_ENABLED = os.getenv("AUTO_INCIDENT_ENABLED", "false").lower() == "true"
+
 # Assinatura HMAC opcional dos eventos de auditoria (Prioridade 7). Vazio =
 # desligado (só a hash chain atual). Quando definido, a assinatura é gravada num
 # canal LATERAL (não altera _compute_entry_hash nem invalida eventos antigos).
