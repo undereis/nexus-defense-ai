@@ -53,6 +53,14 @@ NEXUS_OPERATING_MODE = os.getenv("NEXUS_OPERATING_MODE", "real").lower()
 DEFAULT_ACTOR = os.getenv("NEXUS_DEFAULT_ACTOR", "local_admin")
 DEFAULT_ROLE = os.getenv("NEXUS_DEFAULT_ROLE", "admin")
 
+# RBAC por token na API REST (opcional). CSV de "papel:token" — ex.:
+# "noc_operator:tkn_noc,auditor:tkn_aud". O NEXUS_API_TOKEN principal é SEMPRE
+# admin; tokens listados aqui mapeiam para papéis com menos permissão
+# (noc_operator/soc_analyst/auditor/readonly), permitindo permissões
+# diferenciadas sem um sistema de usuários. Vazio = só o token admin. As ações
+# REST resolvem o papel pelo token e o passam ao Control Plane. NUNCA commitar.
+NEXUS_ROLE_TOKENS = os.getenv("NEXUS_ROLE_TOKENS", "")
+
 # Exigir ativo AUTORIZADO no inventário (asset_registry) para ações sensíveis.
 # false (padrão) = compatível com hoje: alvos que não estão no inventário são
 # permitidos, mas AUDITADOS como "fora do inventário" (e as travas de segurança
