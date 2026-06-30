@@ -519,6 +519,30 @@ CREATE TABLE IF NOT EXISTS system_state (
     value TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Casos / incidentes (Prioridade 6). Fundação de incident management: agrega
+-- evidências, timeline, ações tomadas e eventos relacionados num caso com
+-- ciclo de vida (open→investigating→contained→resolved|false_positive). Campos
+-- de lista (event_ids/timeline/evidence/actions_taken) são JSON. O rótulo
+-- público é derivado do id (INC-0001) na camada tools/incidents.
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'open',
+    owner TEXT NOT NULL DEFAULT '',
+    related_ip TEXT NOT NULL DEFAULT '',
+    related_asset TEXT NOT NULL DEFAULT '',
+    event_ids TEXT NOT NULL DEFAULT '[]',
+    timeline TEXT NOT NULL DEFAULT '[]',
+    evidence TEXT NOT NULL DEFAULT '[]',
+    actions_taken TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    resolved_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
 """
 
 
@@ -2381,3 +2405,82 @@ def set_system_state(key: str, value: str) -> None:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
             (key, value),
         )
+
+
+# ---------------------------------------------------------------------------
+# Casos / incidentes (Prioridade 6)
+# ---------------------------------------------------------------------------
+
+_INCIDENT_COLS = (
+    "id, title, severity, status, owner, related_ip, related_asset, event_ids, "
+    "timeline, evidence, actions_taken, created_at, updated_at, resolved_at"
+)
+_INCIDENT_UPDATABLE = {"title", "severity", "status", "owner", "related_ip", "related_asset"}
+_INCIDENT_LIST_COLS = {"event_ids", "timeline", "evidence", "actions_taken"}
+
+
+def create_incident(title: str, severity: str = "medium", owner: str = "",
+                    related_ip: str = "", related_asset: str = "", status: str = "open") -> int:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO incidents (title, severity, status, owner, related_ip, related_asset) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (title, severity, status, owner, related_ip, related_asset),
+        )
+        return cur.lastrowid
+
+
+def get_incident(incident_id: int):
+    with get_conn() as conn:
+        return conn.execute(
+            f"SELECT {_INCIDENT_COLS} FROM incidents WHERE id = ?", (incident_id,)
+        ).fetchone()
+
+
+def list_incidents(status: str | None = None, limit: int = 50):
+    with get_conn() as conn:
+        if status:
+            return conn.execute(
+                f"SELECT {_INCIDENT_COLS} FROM incidents WHERE status = ? ORDER BY id DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        return conn.execute(
+            f"SELECT {_INCIDENT_COLS} FROM incidents ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+
+
+def update_incident_fields(incident_id: int, **fields) -> bool:
+    cols = {k: v for k, v in fields.items() if k in _INCIDENT_UPDATABLE}
+    if not cols:
+        return False
+    sets = ", ".join(f"{c} = ?" for c in cols)
+    resolved = ""
+    if cols.get("status") in ("resolved", "false_positive"):
+        resolved = ", resolved_at = datetime('now')"
+    with get_conn() as conn:
+        cur = conn.execute(
+            f"UPDATE incidents SET {sets}, updated_at = datetime('now'){resolved} WHERE id = ?",
+            (*cols.values(), incident_id),
+        )
+        return cur.rowcount > 0
+
+
+def append_incident_list(incident_id: int, column: str, entry) -> bool:
+    """Acrescenta um item a uma coluna-lista JSON do incidente (timeline/
+    evidence/actions_taken/event_ids), atualizando updated_at."""
+    if column not in _INCIDENT_LIST_COLS:
+        raise ValueError(f"coluna de lista inválida: {column}")
+    with get_conn() as conn:
+        row = conn.execute(f"SELECT {column} FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+        if row is None:
+            return False
+        try:
+            arr = json.loads(row[0]) if row[0] else []
+        except (json.JSONDecodeError, TypeError):
+            arr = []
+        arr.append(entry)
+        conn.execute(
+            f"UPDATE incidents SET {column} = ?, updated_at = datetime('now') WHERE id = ?",
+            (json.dumps(arr, ensure_ascii=False), incident_id),
+        )
+        return True
