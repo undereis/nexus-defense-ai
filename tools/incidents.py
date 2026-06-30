@@ -13,6 +13,7 @@ aceitam tanto o int (7) quanto o rótulo ("INC-0007" / "inc-7" / "7").
 
 import json
 
+import config
 from core.redaction import redact
 from database.db import (
     append_incident_list,
@@ -158,6 +159,38 @@ def incident_report(incident_ref) -> str:
         lines.append("  ações tomadas:")
         lines += [f"    [{e.get('at', '')[:16]}] {e.get('note', '')}" for e in ac]
     return "\n".join(lines)
+
+
+_ACTIVE_STATUSES: tuple[str, ...] = ("open", "investigating", "contained")
+
+
+def _find_active(ip: str, kind: str) -> int | None:
+    """Incidente ainda ativo do mesmo IP e tipo (dedupe do auto-incidente)."""
+    for row in list_incidents(limit=200):
+        rid, title, _sev, status, _owner, related_ip = row[0], row[1], row[2], row[3], row[4], row[5]
+        if status in _ACTIVE_STATUSES and related_ip == ip and title.startswith(f"[{kind}]"):
+            return rid
+    return None
+
+
+def auto_open_from_event(kind: str, ip: str, detail: str = "", severity: str = "high",
+                         title: str = "") -> int | None:
+    """Abre (ou reaproveita) um incidente a partir de um evento de ataque. Opt-in
+    via AUTO_INCIDENT_ENABLED; idempotente por (ip, kind): se já houver um
+    incidente ativo, só anota e devolve o id existente. Retorna o id ou None."""
+    if not getattr(config, "AUTO_INCIDENT_ENABLED", False):
+        return None
+    existing = _find_active(ip, kind)
+    if existing is not None:
+        add_note(existing, f"novo evento [{kind}]" + (f": {detail}" if detail else ""))
+        return existing
+    t = title or f"[{kind}] {detail or kind} ({ip})"
+    iid = create_incident(redact(t), severity, related_ip=ip)
+    append_incident_list(iid, "timeline",
+                         _ts_entry(f"incidente aberto automaticamente por evento [{kind}]: {detail}"))
+    log_event("incident_auto_opened", ip or None, f"{_ref(iid)} kind={kind} sev={severity}",
+              action_taken="auto-aberto")
+    return iid
 
 
 def list_incidents_report(status: str | None = None, limit: int = 50) -> str:
