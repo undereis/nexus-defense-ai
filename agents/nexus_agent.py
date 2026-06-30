@@ -1913,6 +1913,56 @@ def evaluate_action_policy(action_type: str, target: str = "", role: str = "") -
     )
 
 
+# ---------------- Casos / incidentes (Prioridade 6) ----------------
+
+@tool
+def open_incident(title: str, severity: str = "medium", owner: str = "",
+                  related_ip: str = "", related_asset: str = "") -> str:
+    """Abre um INCIDENTE (caso) para investigação e resposta. severity: low|medium|
+    high|critical. Use quando confirmar/investigar um ataque, anomalia ou queda que
+    mereça rastreamento (timeline, evidências, ações). Retorna o id INC-XXXX."""
+    from tools import incidents
+    return incidents.open_incident(title, severity, owner, related_ip, related_asset)
+
+
+@tool
+def list_incidents(status: str = "") -> str:
+    """Lista incidentes (todos, ou filtrando por status: open|investigating|contained|
+    resolved|false_positive)."""
+    from tools import incidents
+    return incidents.list_incidents_report(status or None)
+
+
+@tool
+def incident_report(incident_ref: str) -> str:
+    """Relatório completo de um incidente (timeline, evidências, ações, eventos
+    vinculados). Aceita o id como 7 ou 'INC-0007'."""
+    from tools import incidents
+    return incidents.incident_report(incident_ref)
+
+
+@tool
+def set_incident_status(incident_ref: str, status: str) -> str:
+    """Muda o status de um incidente: open|investigating|contained|resolved|
+    false_positive. resolved/false_positive encerram o caso."""
+    from tools import incidents
+    return incidents.set_incident_status(incident_ref, status)
+
+
+@tool
+def add_incident_note(incident_ref: str, note: str) -> str:
+    """Acrescenta uma nota à linha do tempo de um incidente (auditada, redigida)."""
+    from tools import incidents
+    return incidents.add_note(incident_ref, note)
+
+
+@tool
+def record_incident_action(incident_ref: str, action: str) -> str:
+    """Registra uma AÇÃO TOMADA num incidente (ex.: 'IP 203.0.113.5 isolado')."""
+    from tools import incidents
+    return incidents.record_action(incident_ref, action)
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -2104,6 +2154,12 @@ TOOLS = [
     get_operating_mode,
     set_operating_mode,
     evaluate_action_policy,
+    open_incident,
+    list_incidents,
+    incident_report,
+    set_incident_status,
+    add_incident_note,
+    record_incident_action,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
