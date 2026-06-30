@@ -43,6 +43,61 @@ def register_action(name: str, func: callable) -> None:
     _ACTIONS[name] = func
 
 
+# Mapa do tool_name (registrado no gate) → action_type da policy engine do
+# Control Plane. Todas as tools de alto risco funilam por request_confirmation,
+# então este é o ponto único para roteá-las pela governança (RBAC + trava de
+# segurança + modo operacional) ANTES do gate de aprovação. As tools já checam
+# os próprios toggles, então o overlay NÃO reavalia toggle (evita divergência).
+_TOOL_ACTION_MAP: dict[str, str] = {
+    "run_exploit_module": "run_exploit",
+    "brute_force_login": "brute_force",
+    "run_sqlmap_scan": "run_sqlmap",
+    "mikrotik_add_firewall_rule": "mikrotik_write",
+    "mikrotik_remove_firewall_rule": "mikrotik_write",
+    "mikrotik_create_pppoe_user": "mikrotik_write",
+    "mikrotik_remove_pppoe_user": "mikrotik_write",
+    "mikrotik_run_command": "mikrotik_write",
+    "bgp_flowspec_announce": "bgp_flowspec",
+    "bgp_flowspec_withdraw": "bgp_flowspec",
+    "asn_block_execute": "asn_block",
+    "brbos_block_domain": "brbos_block_domain",
+}
+
+_TARGET_KEYS = ("ip", "target", "host", "src_address", "dst_address", "cidr",
+                "domain", "url", "asn", "username", "rule_id")
+
+
+def _extract_target(kwargs: dict) -> str:
+    for key in _TARGET_KEYS:
+        val = kwargs.get(key)
+        if val:
+            return str(val)
+    return ""
+
+
+def _governance_precheck(tool_name: str, kwargs: dict) -> str | None:
+    """Roteia a ação pela governança do Control Plane. Retorna uma mensagem se a
+    ação for NEGADA/dry-run (e NÃO deve criar pendência), ou None para seguir ao
+    gate. Só atua em tool_names mapeados; nunca levanta (fail-open: na dúvida,
+    segue para o gate de aprovação, que continua exigindo confirmação)."""
+    action_type = _TOOL_ACTION_MAP.get(tool_name)
+    if action_type is None:
+        return None
+    try:
+        from core import control_plane as cp
+        from core.models import Decision
+
+        req = cp.make_request(action_type, target=_extract_target(kwargs), params=dict(kwargs))
+        dec = cp.precheck_runtime(req)
+    except Exception:
+        return None
+    if dec.decision is Decision.DENY:
+        return f"AÇÃO NEGADA pela governança (Control Plane): {dec.reason}"
+    if dec.decision is Decision.DRY_RUN_ONLY:
+        return f"[modo {dec.mode}] ação '{action_type}' NÃO executada (dry-run): {dec.reason}"
+    return None
+
+
 def _quick_kb_reference(query: str) -> str:
     """Busca o melhor resultado da base de conhecimento local para dar
     contexto técnico automático à confirmação, sem depender do LLM lembrar
@@ -78,12 +133,23 @@ def _deliver_code_out_of_band(action_id: int, summary: str, code: str) -> None:
 
 
 def request_confirmation(
-    tool_name: str, summary: str, ttl_minutes: int = 10, kb_query: str = "", **kwargs
+    tool_name: str, summary: str, ttl_minutes: int = 10, kb_query: str = "",
+    _skip_policy: bool = False, **kwargs
 ) -> str:
     """Cria uma ação pendente em vez de executar na hora. Retorna o texto
     que a tool deve devolver ao agente — SEM o código de confirmação, que
     vai só por canal externo (terminal/webhook). Se kb_query for
-    informado, anexa a melhor referência da base de conhecimento local."""
+    informado, anexa a melhor referência da base de conhecimento local.
+
+    Antes de criar a pendência, roteia a ação pela governança do Control Plane
+    (RBAC + trava de segurança + modo operacional): em modo lab/replay ou alvo
+    proibido/papel sem permissão, NÃO cria pendência — devolve o motivo.
+    `_skip_policy=True` pula isso (usado pelo próprio Control Plane, que já avaliou)."""
+    if not _skip_policy:
+        blocked = _governance_precheck(tool_name, kwargs)
+        if blocked is not None:
+            return blocked
+
     code = secrets.token_hex(3)  # 6 caracteres hex, curto o bastante para digitar
     action_id = create_pending_action(tool_name, json.dumps(kwargs), summary, code, ttl_minutes)
     log_event(

@@ -155,3 +155,34 @@ def evaluate(request) -> ActionDecision:
         f"permitida para papel '{role}' (risco {spec.risk.value}).",
         asset_id=tc.asset_id, target_note=tc.reason,
     )
+
+
+def runtime_precheck(request) -> ActionDecision:
+    """Overlay de governança em RUNTIME para ações que JÁ passam pelo gate de
+    aprovação (tools/risk.py) e que JÁ checam seus próprios toggles/guards.
+
+    Aplica só três dimensões — RBAC, trava de segurança dura do inventário e modo
+    operacional — e NÃO reavalia toggle/engagement/inventário estrito (a tool já
+    cuidou disso). Isso evita divergência de fonte (ex.: toggle mockado no módulo
+    da tool vs. config) e mantém compatibilidade: em modo real com papel admin, o
+    resultado é sempre ALLOW. Retorna DENY / DRY_RUN_ONLY / ALLOW.
+    """
+    spec = _spec(request.action_type)
+    role = rbac.normalize_role(request.role or rbac.default_role())
+    mode = (request.environment or operating_mode.get_operating_mode()).strip().lower()
+
+    def d(dec: Decision, reason: str) -> ActionDecision:
+        return ActionDecision(
+            decision=dec, risk=spec.risk, reason=reason,
+            required_permission=spec.required_permission, changes_state=spec.changes_state, mode=mode,
+        )
+
+    if not rbac.has_permission(role, spec.required_permission):
+        return d(Decision.DENY, f"papel '{role}' não tem a permissão '{spec.required_permission}'.")
+    tc = asset_registry.check_target(request.target, request.action_type, changes_state=spec.changes_state)
+    if tc.hard_denied:
+        return d(Decision.DENY, f"trava de segurança: {tc.reason}.")
+    if spec.changes_state and mode != "real":
+        return d(Decision.DRY_RUN_ONLY,
+                 f"modo operacional '{mode}': ação que altera estado real não executa (dry-run).")
+    return d(Decision.ALLOW, "overlay de governança em runtime: ok")
