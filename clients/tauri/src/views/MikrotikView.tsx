@@ -1,14 +1,14 @@
-import { PlugZap, Router } from "lucide-react";
+import { Router } from "lucide-react";
 import { DataPanel } from "../components/DataPanel";
-import { EmptyState } from "../components/states";
+import { HardwareEmptyState } from "../components/HardwareEmptyState";
 
 export function MikrotikView() {
   return (
-    <DataPanel title="Mikrotik" icon={Router}>
-      <EmptyState
-        icon={PlugZap}
-        title="Indisponível na API atual"
-        hint="A API REST atual não expõe endpoints de Mikrotik/RouterOS. O motor Python tem as tools, mas elas não estão na superfície /api/*. Esta seção será ativada quando esses endpoints existirem — nada é simulado aqui."
+    <DataPanel title="Mikrotik / RouterOS" icon={Router}>
+      <HardwareEmptyState
+        icon={Router}
+        title="Aguardando laboratório / hardware"
+        hint="A API REST atual não expõe endpoints de Mikrotik/RouterOS e ainda não há equipamento conectado. O motor Python já possui as tools de RouterOS; esta seção será ativada quando os endpoints existirem na superfície /api/* e o hardware estiver na rede. Nada é simulado aqui."
       />
     </DataPanel>
   );

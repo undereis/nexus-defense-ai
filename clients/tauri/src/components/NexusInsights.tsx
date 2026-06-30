@@ -1,6 +1,7 @@
 import { AlertOctagon, AlertTriangle, CheckCircle2, Info, type LucideIcon } from "lucide-react";
 import type { Overview, Severity } from "../lib/format";
-import { computeInsights } from "../lib/insights";
+import { computeInsights, readinessInsights } from "../lib/insights";
+import { useEnvironment } from "../lib/environment";
 
 const ICON: Record<Severity, LucideIcon> = {
   bad: AlertOctagon,
@@ -10,7 +11,9 @@ const ICON: Record<Severity, LucideIcon> = {
 };
 
 export function NexusInsights({ data }: { data: Overview }) {
-  const items = computeInsights(data);
+  const { mode } = useEnvironment();
+  // Achados/inconsistências reais primeiro; depois prontidão/preparação.
+  const items = [...computeInsights(data), ...readinessInsights(data, mode)];
   return (
     <div>
       <div className="muted-note" style={{ marginBottom: 10 }}>

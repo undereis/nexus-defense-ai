@@ -3,6 +3,7 @@ import { Gate } from "./_gate";
 import { MetricCard } from "../components/MetricCard";
 import { DataPanel } from "../components/DataPanel";
 import { EmptyState } from "../components/states";
+import { HardwareEmptyState } from "../components/HardwareEmptyState";
 
 export function AnalyticsView() {
   return (
@@ -20,7 +21,15 @@ export function AnalyticsView() {
             </div>
             <DataPanel title="Top tipos de evento (24h)" icon={BarChart3}>
               {top.length === 0 ? (
-                <EmptyState title="Sem eventos" hint="Nada registrado nas últimas 24h." />
+                d.events_24h === 0 && d.devices.total === 0 ? (
+                  <HardwareEmptyState
+                    icon={BarChart3}
+                    title="Sem dados analíticos ainda"
+                    hint="Não há eventos nas últimas 24h e nenhum hardware monitorado. Os gráficos serão preenchidos com telemetria real assim que houver eventos ou equipamentos conectados — nada é simulado."
+                  />
+                ) : (
+                  <EmptyState title="Sem eventos" hint="Nada registrado nas últimas 24h." />
+                )
               ) : (
                 <div>
                   {top.map(([t, n]) => (

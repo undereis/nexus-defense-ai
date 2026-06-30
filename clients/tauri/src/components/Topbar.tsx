@@ -2,6 +2,7 @@ import { RefreshCw } from "lucide-react";
 import { useNexus, isStale } from "../lib/useNexus";
 import { relativeTime, type Severity } from "../lib/format";
 import { StatusPill } from "./StatusPill";
+import { EnvironmentModePill } from "./EnvironmentModePill";
 
 export function Topbar({ title }: { title: string }) {
   const { status, lastUpdated, busy, refresh } = useNexus();
@@ -25,6 +26,7 @@ export function Topbar({ title }: { title: string }) {
       <h2>{title}</h2>
       <StatusPill tone={tone} label={label} />
       <span className="spacer" />
+      <EnvironmentModePill />
       <span className={`updated ${stale ? "stale" : ""}`}>
         {lastUpdated
           ? `atualizado ${relativeTime(lastUpdated.toISOString())}${stale ? " · possivelmente vencido" : ""}`
