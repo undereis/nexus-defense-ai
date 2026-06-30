@@ -82,6 +82,15 @@ def evaluate(req: ActionRequest) -> ActionDecision:
     return dec
 
 
+def precheck_runtime(req: ActionRequest) -> ActionDecision:
+    """Overlay de governança (RBAC + segurança + modo) para ações que já passam
+    pelo gate de aprovação de tools/risk.py. Audita e devolve a decisão."""
+    from core.policy_engine import runtime_precheck
+    dec = runtime_precheck(req)
+    _audit("control_plane_precheck", req, dec)
+    return dec
+
+
 def request_action(
     req: ActionRequest,
     executor=None,
@@ -128,7 +137,8 @@ def request_action(
             )
         risk_gate.register_action(name, executor)
         text = risk_gate.request_confirmation(
-            name, _summary(req, dec), ttl_minutes=approval_ttl_minutes, kb_query=kb_query, **params
+            name, _summary(req, dec), ttl_minutes=approval_ttl_minutes, kb_query=kb_query,
+            _skip_policy=True, **params
         )
         return ActionResult(ActionStatus.AWAITING_APPROVAL, dec, output=text)
 
