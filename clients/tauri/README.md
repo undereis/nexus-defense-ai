@@ -38,32 +38,47 @@ npm run tauri build
 ```
 O `.app`/`.dmg` sai em `src-tauri/target/release/bundle/`.
 
-## Usar
-1. No topo, informe a **URL da API** (ex.: `http://127.0.0.1:8000`) e o **token**
-   (`NEXUS_API_TOKEN` do `.env`; se vazio, o servidor imprime um temporário no
-   stdout ao subir). Ambos ficam salvos localmente (localStorage).
-2. **Consultas:** Visão geral · Assinantes · Equipamentos · Quedas · Eventos ·
-   Autodiagnóstico.
-3. **Ações:** digite o `id` do assinante e use Bloquear/Desbloquear; ou
-   Cobrança (dry-run) e Checar equipamentos.
+## Usar (Command Center)
+1. Na tela de conexão, informe a **URL da API** (ex.: `http://127.0.0.1:8000`) e o
+   **token** (`NEXUS_API_TOKEN` do `.env`; se vazio, o servidor imprime um
+   temporário no stdout ao subir). Ficam salvos localmente (localStorage) e podem
+   ser trocados depois em **Configurações**.
+2. **Topbar:** status da API (online/offline/token inválido), última atualização
+   (com aviso de "possivelmente vencido") e botão Atualizar. Os dados fazem
+   **auto-refresh a cada 15s** via `/api/overview`.
+3. **Sidebar:** Dashboard · Defesa · Mapa · Mikrotik · Firewall · IA · Analytics ·
+   Threat Intelligence · Logs · Configurações.
+4. **Dashboard:** cards de estado, **Mapa de Ameaças** (visualização ilustrativa
+   com IPs reais da blocklist), **Centro de Operações** (nível de risco),
+   **Nexus IA — Insights** (calculados no app a partir dos dados reais, incl.
+   detecção de inconsistências como loopback/IP privado bloqueado), timeline de
+   eventos por severidade, IPs bloqueados, quedas e **Ações rápidas**.
 
-As ações de **alto risco** (exploração, ASN/BGP, RPZ) **não** estão nesta API —
-continuam só pelo agente, atrás do gate de `tools/risk.py`.
+Tudo usa **dados reais** da API. Onde não há endpoint (ex.: Mikrotik), a seção
+aparece como **"indisponível na API atual"** — nada é simulado. As ações de
+**alto risco** (exploração, ASN/BGP, RPZ) **não** estão na API — continuam só
+pelo agente, atrás do gate de `tools/risk.py`.
 
 ## Estrutura
 ```
 clients/tauri/
-├── src/                # frontend React + TS
-│   ├── api.ts          # wrapper REST (Bearer) via plugin HTTP do Tauri
-│   ├── App.tsx         # UI: conexão, consultas, ações, log
-│   ├── main.tsx
-│   └── styles.css
-├── src-tauri/          # shell nativo (Rust/Tauri v2)
-│   ├── src/{main,lib}.rs
-│   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   └── capabilities/default.json   # permissão HTTP (escopo das URLs)
-├── index.html · vite.config.ts · tsconfig*.json · package.json
+├── src/
+│   ├── api.ts                 # wrapper REST (Bearer) via plugin HTTP do Tauri (INALTERADO)
+│   ├── App.tsx                # provider + shell
+│   ├── lib/
+│   │   ├── useNexus.tsx       # estado central: fetch/poll/estados (ok/offline/401)
+│   │   ├── format.ts          # severidade, tempo relativo, IP inconsistente, risco
+│   │   ├── insights.ts        # "Nexus IA" — insights derivados dos dados reais
+│   │   └── nav.ts             # itens da sidebar
+│   ├── components/            # AppShell, Sidebar, Topbar, MetricCard, DataPanel,
+│   │   │                      # CommandCenter, ThreatMapPlaceholder, EventsTimeline,
+│   │   │                      # NexusInsights, QuickActions, StatusPill, Tables,
+│   │   │                      # SubscriberAction, states (loading/erro/offline/vazio)
+│   ├── views/                # Dashboard/Defesa/Mapa/Mikrotik/Firewall/IA/Analytics/
+│   │   │                      # ThreatIntel/Logs/Settings/ConnectScreen + registry
+│   ├── main.tsx · styles.css  # tema dark premium SOC/NOC
+├── src-tauri/                 # shell nativo (Rust/Tauri v2) — inalterado
+└── index.html · vite.config.ts · tsconfig*.json · package.json
 ```
 
 ### Segurança / produção
