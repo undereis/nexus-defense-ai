@@ -129,15 +129,29 @@ prompt-injection tratada como dado inerte, e que DENY/DRY_RUN/REQUIRE_APPROVAL
   refletindo modo/toggles/papel/alvo. Complementa o motor de escalonamento
   `tools/playbook.py` (ATTACK_PLAYBOOKS), não o substitui.
 
+## Entregue na rodada de integração
+
+- **Integração total (alto risco)** ✅ Todas as tools que funilam por
+  `tools/risk.request_confirmation` (exploit/hydra/sqlmap/Mikrotik write/BGP/ASN/
+  BrbOS) passam por um **overlay do Control Plane** (`core/policy_engine.runtime_precheck`
+  via `_governance_precheck`): RBAC + trava de segurança + modo operacional ANTES
+  de criar a pendência. Em real+admin → comportamento de antes; lab/replay →
+  dry-run sem pendência; alvo proibido / papel sem permissão → negado e auditado.
+  SSH (allowlist), social (só gera texto) e honeypot seguem guardados pelos
+  próprios mecanismos — roteamento explícito deles continua TODO.
+- **RBAC real (REST)** ✅ `config.NEXUS_ROLE_TOKENS` ('papel:token') + `require_token`
+  resolve o papel; ações REST (block/unblock subscriber) passam o papel ao Control
+  Plane. Token principal = admin (compatível). readonly/auditor → ação negada.
+- **Auto-incidente** ✅ `incidents.auto_open_from_event` (opt-in `AUTO_INCIDENT_ENABLED`,
+  idempotente por ip/kind, fail-safe) ligado ao hit de honeypot.
+
 ## Próximos passos (TODOs)
 
-- **Integração total**: rotear Mikrotik/ASN/BGP/BrbOS/exploit/hydra/sqlmap/SSH/
-  social/honeypot explicitamente pelo Control Plane (hoje gated por `risk.py`).
-- **RBAC real**: usuários/tokens por papel (mapear token da REST → papel) em vez
-  do ator único `local_admin/admin`.
+- **Roteamento explícito** de SSH/social/honeypot pelo Control Plane (hoje
+  guardados pelos próprios mecanismos).
 - **Modo no cliente**: negociar o modo visual do Tauri com o modo operacional do
   backend (header + decisão do servidor).
-- **Auto-incidente**: abrir incidente automaticamente em eventos de alta
-  severidade / honeypot hit, e vincular as ações do Control Plane ao caso.
+- **RBAC mais rico**: expandir o RBAC por token para outras rotas/ações e para o
+  agente; usuários reais.
 - **Segredos**: migrar de `.env` para keychain/Vault (a redaction já evita
   vazamento na trilha; o armazenamento seguro é a próxima camada).
