@@ -1963,6 +1963,35 @@ def record_incident_action(incident_ref: str, action: str) -> str:
     return incidents.record_action(incident_ref, action)
 
 
+# ---------------- Auditoria assinada / export (Prioridade 7) ----------------
+
+@tool
+def verify_audit_signatures() -> str:
+    """Verifica as assinaturas HMAC da trilha de auditoria (autenticidade, além da
+    integridade da hash chain). Requer AUDIT_HMAC_SECRET; se vazio, informa que está
+    desligado. Mismatch = adulteração depois de assinado."""
+    from core import audit_signing
+    return audit_signing.describe(audit_signing.verify_signatures())
+
+
+@tool
+def sign_audit_trail_now() -> str:
+    """Assina por HMAC os eventos da trilha ainda não assinados (no-op se
+    AUDIT_HMAC_SECRET estiver vazio). Normalmente isso acontece junto do checkpoint."""
+    from core import audit_signing
+    if not audit_signing.is_enabled():
+        return "Assinatura HMAC desligada (defina AUDIT_HMAC_SECRET no .env para habilitar)."
+    return f"{audit_signing.sign_new_events()} evento(s) assinado(s) por HMAC."
+
+
+@tool
+def export_audit_trail() -> str:
+    """Exporta toda a trilha de auditoria (eventos + hash chain + assinatura) para um
+    arquivo JSON em workdir/exports — para arquivamento externo / forense / ingestão."""
+    from core import audit_signing
+    return audit_signing.export_events_to_workdir()
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -2160,6 +2189,9 @@ TOOLS = [
     set_incident_status,
     add_incident_note,
     record_incident_action,
+    verify_audit_signatures,
+    sign_audit_trail_now,
+    export_audit_trail,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de

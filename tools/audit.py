@@ -123,11 +123,23 @@ def create_checkpoint() -> str:
     )
     save_audit_checkpoint(len(rows), last_event_id, last_entry_hash, sent_externally=sent)
 
+    # Assinatura HMAC (Prioridade 7): ao ancorar um checkpoint, assina os eventos
+    # novos. No-op se AUDIT_HMAC_SECRET estiver vazio. Integra sem um loop novo.
+    signed_note = ""
+    try:
+        from core import audit_signing
+
+        signed = audit_signing.sign_new_events()
+        if signed:
+            signed_note = f" {signed} evento(s) assinado(s) por HMAC."
+    except Exception:
+        signed_note = ""
+
     if sent:
-        return f"Checkpoint criado e enviado externamente (evento id={last_event_id})."
+        return f"Checkpoint criado e enviado externamente (evento id={last_event_id}).{signed_note}"
     return (
         f"Checkpoint criado, mas SEM envio externo (evento id={last_event_id}) — "
-        "configure NOTIFY_WEBHOOK_URL ou SLACK_BOT_TOKEN para proteção real contra truncamento."
+        f"configure NOTIFY_WEBHOOK_URL ou SLACK_BOT_TOKEN para proteção real contra truncamento.{signed_note}"
     )
 
 
