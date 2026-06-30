@@ -543,6 +543,18 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 
 CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+
+-- Assinaturas HMAC dos eventos (Prioridade 7) — canal LATERAL. NÃO altera a
+-- tabela events nem _compute_entry_hash: cada linha guarda o HMAC do entry_hash
+-- de um evento, assinado com AUDIT_HMAC_SECRET. Dá autenticidade (prova de que a
+-- cadeia foi produzida por quem tem o segredo) por cima da integridade da hash
+-- chain. Eventos antigos continuam válidos mesmo sem assinatura.
+CREATE TABLE IF NOT EXISTS event_signatures (
+    event_id INTEGER PRIMARY KEY,
+    signature TEXT NOT NULL,
+    algo TEXT NOT NULL DEFAULT 'hmac-sha256',
+    signed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -2484,3 +2496,42 @@ def append_incident_list(incident_id: int, column: str, entry) -> bool:
             (json.dumps(arr, ensure_ascii=False), incident_id),
         )
         return True
+
+
+# ---------------------------------------------------------------------------
+# Assinaturas HMAC de eventos (Prioridade 7) — canal lateral
+# ---------------------------------------------------------------------------
+
+def get_unsigned_events():
+    """(id, entry_hash) de eventos com hash e SEM assinatura ainda."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT e.id, e.entry_hash FROM events e "
+            "LEFT JOIN event_signatures s ON e.id = s.event_id "
+            "WHERE e.entry_hash IS NOT NULL AND s.event_id IS NULL ORDER BY e.id"
+        ).fetchall()
+
+
+def add_event_signature(event_id: int, signature: str, algo: str = "hmac-sha256") -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO event_signatures (event_id, signature, algo) VALUES (?, ?, ?)",
+            (event_id, signature, algo),
+        )
+
+
+def get_signed_events():
+    """(id, entry_hash, signature) dos eventos assinados, para verificação."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT e.id, e.entry_hash, s.signature FROM events e "
+            "JOIN event_signatures s ON e.id = s.event_id ORDER BY e.id"
+        ).fetchall()
+
+
+def get_event_signature(event_id: int):
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT signature, algo, signed_at FROM event_signatures WHERE event_id = ?",
+            (event_id,),
+        ).fetchone()
