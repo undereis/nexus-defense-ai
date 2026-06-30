@@ -114,23 +114,30 @@ DENY, modo lab/replay → DRY_RUN, exploração ativa sem toggle → DENY / com 
 prompt-injection tratada como dado inerte, e que DENY/DRY_RUN/REQUIRE_APPROVAL
 **não executam** o executor.
 
+## Entregue depois das fundações
+
+- **P6 — Case management** ✅ `tools/incidents.py` + tabela `incidents`: casos com
+  ciclo de vida (open→investigating→contained→resolved|false_positive), timeline,
+  evidências, ações tomadas e eventos vinculados; redigido + auditado.
+- **P7 — Auditoria assinada** ✅ `core/audit_signing.py`: HMAC opcional
+  (`AUDIT_HMAC_SECRET`) num canal LATERAL (`event_signatures`, sem tocar a hash
+  chain) + `verify_signatures` + export JSON; assina junto do checkpoint periódico.
+- **P9 — Runbooks determinísticos** ✅ `core/response_playbooks.py`: DDoS, IP
+  suspeito, honeypot hit, credential stuffing, queda de equipamento, drift de
+  firewall, mudança no Mikrotik, brute force autorizado — cada ação candidata é
+  classificada PELA própria policy engine (AUTO/APROVAÇÃO/DRY-RUN/BLOQUEADA),
+  refletindo modo/toggles/papel/alvo. Complementa o motor de escalonamento
+  `tools/playbook.py` (ATTACK_PLAYBOOKS), não o substitui.
+
 ## Próximos passos (TODOs)
 
-- **P6 — Case management**: tabela `incidents` (id/title/severity/status/owner/
-  related_ip/asset/event_ids/timeline/evidence/actions_taken/timestamps) + tools.
-- **P7 — Auditoria assinada**: assinatura HMAC opcional (`AUDIT_HMAC_SECRET`) num
-  canal LATERAL (sem tocar a hash chain); exportação de eventos para JSON;
-  reforço da exportação SIEM existente.
-- **P9 — Playbooks determinísticos**: DDoS, IP suspeito, honeypot hit, credential
-  stuffing, queda de equipamento, drift de firewall, mudança no Mikrotik, brute
-  force autorizado (gatilho → evidências → ações recomendadas/automáticas/que
-  exigem aprovação → relatório). Hoje há `tools/playbook.py` (ATTACK_PLAYBOOKS) —
-  evoluir/unificar.
 - **Integração total**: rotear Mikrotik/ASN/BGP/BrbOS/exploit/hydra/sqlmap/SSH/
   social/honeypot explicitamente pelo Control Plane (hoje gated por `risk.py`).
 - **RBAC real**: usuários/tokens por papel (mapear token da REST → papel) em vez
   do ator único `local_admin/admin`.
 - **Modo no cliente**: negociar o modo visual do Tauri com o modo operacional do
   backend (header + decisão do servidor).
+- **Auto-incidente**: abrir incidente automaticamente em eventos de alta
+  severidade / honeypot hit, e vincular as ações do Control Plane ao caso.
 - **Segredos**: migrar de `.env` para keychain/Vault (a redaction já evita
   vazamento na trilha; o armazenamento seguro é a próxima camada).

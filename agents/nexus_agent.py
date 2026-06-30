@@ -1992,6 +1992,29 @@ def export_audit_trail() -> str:
     return audit_signing.export_events_to_workdir()
 
 
+# ---------------- Runbooks de resposta governados (Prioridade 9) ----------------
+# Distinto de list_response_playbooks (motor de ESCALONAMENTO por nível): aqui são
+# guias de resposta cujas ações são CLASSIFICADAS pela governança em tempo real.
+
+@tool
+def list_runbooks() -> str:
+    """Lista os runbooks determinísticos de resposta (DDoS, IP suspeito, honeypot hit,
+    credential stuffing, queda de equipamento, drift de firewall, mudança no Mikrotik,
+    brute force autorizado) com seus gatilhos."""
+    from core import response_playbooks
+    return response_playbooks.list_playbooks()
+
+
+@tool
+def runbook_plan(runbook: str, target: str = "", role: str = "") -> str:
+    """Relatório de um runbook de resposta: gatilho, evidências necessárias, ações
+    recomendadas e a CLASSIFICAÇÃO das ações pela governança no estado atual
+    (AUTO/APROVAÇÃO/DRY-RUN/BLOQUEADA, conforme modo operacional, toggles, papel e
+    alvo). Não executa nada — só planeja. Ex.: runbook='ddos', target='203.0.113.5'."""
+    from core import response_playbooks
+    return response_playbooks.plan_report(runbook, target, role)
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -2192,6 +2215,8 @@ TOOLS = [
     verify_audit_signatures,
     sign_audit_trail_now,
     export_audit_trail,
+    list_runbooks,
+    runbook_plan,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
