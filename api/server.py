@@ -17,7 +17,7 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from agents.runtime import ask_agent
-from config import API_TOKEN, SLACK_SIGNING_SECRET
+from config import API_TOKEN, NEXUS_ROLE_TOKENS, SLACK_SIGNING_SECRET
 from database.db import init_db, log_event
 from tools import dashboard, noc_api, noc_commands, telegram
 from tools.slack_verify import verify_signature
@@ -37,10 +37,44 @@ if not _runtime_token:
 _api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
 
-def require_token(value: str = Security(_api_key_header)):
-    expected = f"Bearer {_runtime_token}"
-    if not value or not secrets.compare_digest(value, expected):
+def _role_token_map() -> dict[str, str]:
+    """Parseia NEXUS_ROLE_TOKENS ('papel:token,papel:token') → {token: papel}."""
+    out: dict[str, str] = {}
+    for pair in (NEXUS_ROLE_TOKENS or "").split(","):
+        pair = pair.strip()
+        if ":" not in pair:
+            continue
+        role, tok = pair.split(":", 1)
+        role, tok = role.strip(), tok.strip()
+        if role and tok:
+            out[tok] = role
+    return out
+
+
+_ROLE_TOKENS = _role_token_map()
+
+
+def _resolve_role(token: str) -> str | None:
+    """Resolve o papel a partir do token: o token principal é admin; os de
+    NEXUS_ROLE_TOKENS mapeiam para papéis com menos permissão. None = inválido."""
+    if token and secrets.compare_digest(token, _runtime_token):
+        return "admin"
+    for tok, role in _ROLE_TOKENS.items():
+        if token and secrets.compare_digest(token, tok):
+            return role
+    return None
+
+
+def require_token(value: str = Security(_api_key_header)) -> str:
+    """Valida o token e RESOLVE O PAPEL (RBAC). Retorna o papel ('admin' p/ o
+    token principal; o mapeado p/ tokens de NEXUS_ROLE_TOKENS). 401 se inválido.
+    Endpoints de ação capturam o retorno e o passam ao Control Plane; endpoints
+    de leitura usam só como dependência (qualquer papel válido pode ler)."""
+    token = value[len("Bearer "):] if value and value.startswith("Bearer ") else ""
+    role = _resolve_role(token)
+    if role is None:
         raise HTTPException(status_code=401, detail="Token inválido ou ausente.")
+    return role
 
 
 class ChatRequest(BaseModel):
@@ -109,14 +143,18 @@ def api_events(hours: float = 24):
     return {"events": noc_api.events(hours)}
 
 
-@app.post("/api/subscribers/{subscriber_id}/block", dependencies=[Depends(require_token)])
-def api_block_subscriber(subscriber_id: str, reason: str = "bloqueio via API"):
-    return noc_api.block_subscriber(subscriber_id, reason)
+@app.post("/api/subscribers/{subscriber_id}/block")
+def api_block_subscriber(subscriber_id: str, reason: str = "bloqueio via API",
+                         role: str = Depends(require_token)):
+    # O papel resolvido do token vai ao Control Plane: um token readonly/auditor
+    # não tem 'noc.block_subscriber' e a ação é negada (governado + auditado).
+    return noc_api.block_subscriber(subscriber_id, reason, actor=f"api:{role}", role=role)
 
 
-@app.post("/api/subscribers/{subscriber_id}/unblock", dependencies=[Depends(require_token)])
-def api_unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio via API"):
-    return noc_api.unblock_subscriber(subscriber_id, reason)
+@app.post("/api/subscribers/{subscriber_id}/unblock")
+def api_unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio via API",
+                           role: str = Depends(require_token)):
+    return noc_api.unblock_subscriber(subscriber_id, reason, actor=f"api:{role}", role=role)
 
 
 @app.post("/api/billing/run", dependencies=[Depends(require_token)])
