@@ -10,6 +10,7 @@ Read-only nas consultas; as ações reaproveitam tools/billing e
 tools/device_monitor (mesma guarda/auditoria do resto do sistema).
 """
 
+from core import control_plane as cp
 from database.db import (
     get_events_since,
     list_device_outages,
@@ -57,14 +58,31 @@ def health() -> dict:
     return {"report": selftest.run_selftest()}
 
 
-# ---------- ações (token-gated nos endpoints; auditadas nos módulos) ----------
+# ---------- ações (token-gated nos endpoints; agora via Control Plane) ----------
+# Importante: estas ações vêm da API REST / cliente Tauri. Roteá-las pelo Control
+# Plane fecha o bypass pela API (a governança não vale só para o agente): toda
+# ação passa por política + inventário + modo operacional + auditoria. Em modo
+# lab/replay, vira dry-run (não toca o estado real). O contrato {"message": ...}
+# é preservado; um campo "decision" é ADICIONADO (aditivo, clientes ignoram).
 
-def block_subscriber(subscriber_id: str, reason: str = "bloqueio via API") -> dict:
-    return {"message": billing.block_subscriber_by_id(subscriber_id, reason=reason)}
+def block_subscriber(subscriber_id: str, reason: str = "bloqueio via API",
+                     actor: str = "", role: str = "") -> dict:
+    req = cp.make_request(
+        "block_subscriber", target=subscriber_id, actor=actor, role=role,
+        params={"subscriber_id": subscriber_id, "reason": reason},
+    )
+    res = cp.request_action(req, executor=billing.block_subscriber_by_id, tool_name="cp_block_subscriber")
+    return {"message": res.output, "decision": res.decision.decision.value, "status": res.status.value}
 
 
-def unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio via API") -> dict:
-    return {"message": billing.unblock_subscriber_by_id(subscriber_id, reason=reason)}
+def unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio via API",
+                       actor: str = "", role: str = "") -> dict:
+    req = cp.make_request(
+        "unblock_subscriber", target=subscriber_id, actor=actor, role=role,
+        params={"subscriber_id": subscriber_id, "reason": reason},
+    )
+    res = cp.request_action(req, executor=billing.unblock_subscriber_by_id, tool_name="cp_unblock_subscriber")
+    return {"message": res.output, "decision": res.decision.decision.value, "status": res.status.value}
 
 
 def run_billing(dry_run: bool = True) -> dict:

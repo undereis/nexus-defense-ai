@@ -38,6 +38,34 @@ SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 
 API_TOKEN = os.getenv("NEXUS_API_TOKEN", "")
 
+# --- Governança / Control Plane ---
+# MODO OPERACIONAL do backend (fonte da verdade da EXECUÇÃO): 'real' | 'lab' |
+# 'replay'. É independente do modo VISUAL do cliente Tauri (que é só localStorage
+# do cliente e não trafega para cá). Em 'lab'/'replay' a policy engine NÃO deixa
+# executar ação real que altere estado (só leitura/refresh). Um operador pode
+# sobrescrever em runtime (gravado em system_state); este valor é só o default.
+NEXUS_OPERATING_MODE = os.getenv("NEXUS_OPERATING_MODE", "real").lower()
+
+# Ator/role padrão quando não há sistema de usuários real (compatível com o
+# token único atual): toda ação sem ator explícito é atribuída a 'local_admin'
+# com papel 'admin' — mantém o comportamento atual, mas já auditável e pronto
+# para evoluir para usuários reais depois.
+DEFAULT_ACTOR = os.getenv("NEXUS_DEFAULT_ACTOR", "local_admin")
+DEFAULT_ROLE = os.getenv("NEXUS_DEFAULT_ROLE", "admin")
+
+# Exigir ativo AUTORIZADO no inventário (asset_registry) para ações sensíveis.
+# false (padrão) = compatível com hoje: alvos que não estão no inventário são
+# permitidos, mas AUDITADOS como "fora do inventário" (e as travas de segurança
+# duras — infra própria crítica, loopback, reservado — sempre negam). true =
+# endurece: só ativos explicitamente cadastrados e no escopo passam.
+REQUIRE_ASSET_AUTHORIZATION = os.getenv("REQUIRE_ASSET_AUTHORIZATION", "false").lower() == "true"
+
+# Assinatura HMAC opcional dos eventos de auditoria (Prioridade 7). Vazio =
+# desligado (só a hash chain atual). Quando definido, a assinatura é gravada num
+# canal LATERAL (não altera _compute_entry_hash nem invalida eventos antigos).
+# Implementação de assinatura é etapa futura — ver docs/control_plane.md.
+AUDIT_HMAC_SECRET = os.getenv("AUDIT_HMAC_SECRET", "")
+
 # Webhook genérico para notificações fora do terminal (Slack incoming
 # webhook, Discord webhook, ou qualquer endpoint custom que aceite JSON
 # via POST). Vazio = notificações ficam só no terminal, como sempre foi.

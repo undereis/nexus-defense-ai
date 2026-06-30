@@ -141,9 +141,18 @@ def isolate_ip(ip: str, reason: str = "Ataque detectado") -> str:
     """Isola (bloqueia) um endereço IP na rede local usando o firewall (pfctl),
     cortando toda comunicação com ele. Use quando confirmar um ataque ou
     comportamento malicioso vindo desse IP."""
-    result = firewall.block_ip(ip, reason)
-    threat_intel.record_confirmed_isolation(ip, reason)
-    return result
+    # Roteado pelo Control Plane: política + inventário (trava loopback/infra
+    # crítica) + modo operacional (lab/replay → dry-run) + auditoria. Em modo
+    # real com o ator/role padrão (admin), o comportamento é o mesmo de antes.
+    from core import control_plane as cp
+
+    def _do(ip: str, reason: str) -> str:
+        out = firewall.block_ip(ip, reason)
+        threat_intel.record_confirmed_isolation(ip, reason)
+        return out
+
+    req = cp.make_request("block_ip", target=ip, params={"ip": ip, "reason": reason})
+    return cp.request_action(req, executor=_do, tool_name="cp_isolate_ip").output
 
 
 @tool
@@ -1831,6 +1840,79 @@ def brbos_ratelimit_status() -> str:
     return brbos.ratelimit_status()
 
 
+# ---------------- Governança (Control Plane / Prioridades 1-4) ----------------
+
+@tool
+def register_authorized_asset(
+    asset_id: str, asset_type: str, ip: str = "", cidr: str = "", hostname: str = "",
+    owner: str = "", environment: str = "real", authorized_scope: str = "",
+    valid_until: str = "", notes: str = "",
+) -> str:
+    """Cadastra/atualiza um ativo AUTORIZADO no inventário de governança (asset_registry):
+    o alvo que o Control Plane aceita para ações sensíveis. asset_type: network|host|
+    mikrotik|subscriber|server|sensor|honeypot|lab. environment: real|lab. authorized_scope:
+    csv de ações (ex.: 'block_ip,unblock_ip') ou '*'. Sem ativo autorizado, em modo estrito
+    (REQUIRE_ASSET_AUTHORIZATION=true) a ação sensível não executa."""
+    from tools import asset_registry
+    return asset_registry.authorize_asset(
+        asset_id, asset_type, ip=ip, cidr=cidr, hostname=hostname, owner=owner,
+        environment=environment, authorized_scope=authorized_scope,
+        valid_until=valid_until, notes=notes,
+    )
+
+
+@tool
+def list_authorized_assets() -> str:
+    """Lista os ativos autorizados no inventário de governança (asset_registry)."""
+    from tools import asset_registry
+    return asset_registry.list_authorized_assets()
+
+
+@tool
+def revoke_authorized_asset(asset_id: str) -> str:
+    """Remove um ativo do inventário de governança (asset_registry)."""
+    from tools import asset_registry
+    return asset_registry.revoke_asset(asset_id)
+
+
+@tool
+def get_operating_mode() -> str:
+    """Mostra o MODO OPERACIONAL do backend (real|lab|replay) — a fonte da verdade da
+    EXECUÇÃO, independente do modo visual do cliente Tauri. Em lab/replay, ações sensíveis
+    que alteram estado real viram dry-run (não executam)."""
+    from core import operating_mode
+    return f"Modo operacional do backend: {operating_mode.get_operating_mode()}"
+
+
+@tool
+def set_operating_mode(mode: str) -> str:
+    """Define o MODO OPERACIONAL do backend: real|lab|replay. CUIDADO: 'real' permite ações
+    reais; 'lab'/'replay' forçam dry-run em ações que alteram estado. É auditado."""
+    from core import operating_mode
+    from database.db import log_event
+    try:
+        m = operating_mode.set_operating_mode(mode)
+    except ValueError as exc:
+        return str(exc)
+    log_event("operating_mode_changed", None, f"mode={m}", action_taken="alterado pelo operador")
+    return f"Modo operacional do backend definido para '{m}'."
+
+
+@tool
+def evaluate_action_policy(action_type: str, target: str = "", role: str = "") -> str:
+    """Simula (SEM executar) a decisão do Control Plane para uma ação:
+    ALLOW/DENY/REQUIRE_APPROVAL/DRY_RUN_ONLY, com o motivo — útil para entender por que uma
+    ação seria barrada antes de tentar. Não altera nada nem audita execução."""
+    from core import control_plane as cp
+    from core.policy_engine import evaluate as _eval
+    req = cp.make_request(action_type, target=target, role=role)
+    d = _eval(req)
+    return (
+        f"Ação '{action_type}' alvo='{target or '—'}' papel='{req.role}' → "
+        f"{d.decision.value.upper()} (risco {d.risk.value}). Motivo: {d.reason}"
+    )
+
+
 TOOLS = [
     check_network_status,
     check_traffic_anomaly,
@@ -2016,6 +2098,12 @@ TOOLS = [
     list_pending_actions,
     confirm_pending_action,
     cancel_pending_action,
+    register_authorized_asset,
+    list_authorized_assets,
+    revoke_authorized_asset,
+    get_operating_mode,
+    set_operating_mode,
+    evaluate_action_policy,
 ]
 
 SYSTEM_PROMPT = f"""Você é a Nexus Defense AI, uma inteligência artificial autônoma de
@@ -2214,6 +2302,18 @@ Sua missão:
     IMPACTO (afeta a resolução de TODOS os clientes) — só via gate de
     confirmação, exige ALLOW_BRBOS_BLOCK, e nunca em domínio próprio. Leitura
     (stats, brbos_list_rpz, brbos_ratelimit_status) é livre.
+
+28. GOVERNANÇA (Control Plane): ações sensíveis começam a passar por uma camada
+    de governança determinística antes de executar — política + papel/permissão
+    (RBAC) + ativo autorizado (inventário) + MODO OPERACIONAL + auditoria. O modo
+    operacional do backend (get_operating_mode/set_operating_mode: real|lab|replay)
+    é a FONTE DA VERDADE da execução, independente do modo visual do cliente Tauri:
+    em lab/replay, ação que altera estado real NÃO executa (vira dry-run). Antes de
+    tentar uma ação que ache que pode ser barrada, você pode simular com
+    evaluate_action_policy. Cadastre alvos legítimos com register_authorized_asset
+    (redes próprias, labs, assinantes) — sem ativo autorizado, em modo estrito a
+    ação sensível não executa. Isso COMPLEMENTA (não substitui) o gate de
+    confirmação fora de banda do item 22.
 
 Seja proativa nas decisões técnicas de defesa, mas nunca tome ações
 irreversíveis ou de alto impacto fora do escopo de isolar IPs sem deixar
