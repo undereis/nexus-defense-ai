@@ -37,8 +37,8 @@ ou token errado → `401`.
 ### Ações (POST)
 | Método | Rota | Params | Resposta |
 |---|---|---|---|
-| POST | `/api/subscribers/{id}/block` | `reason=...` | `{"message":"OK c1 (203.0.113.5): ..."}` |
-| POST | `/api/subscribers/{id}/unblock` | `reason=...` | `{"message":"OK c1 (...)"}` |
+| POST | `/api/subscribers/{id}/block` | `reason=...` | `{"message":"...", "decision":"allow", "status":"executed"}` ¹ |
+| POST | `/api/subscribers/{id}/unblock` | `reason=...` | `{"message":"...", "decision":"...", "status":"..."}` ¹ |
 | POST | `/api/billing/run` | `dry_run=true` | `{"message":"..."}` (dry_run só lista; cap de segurança vale) |
 | POST | `/api/devices/check` | — | `{"transitions":["DOWN d1 (10.0.0.1)", ...]}` |
 
@@ -46,6 +46,14 @@ ou token errado → `401`.
 > de infraestrutura, é idempotente e fica na hash-chain. Ações de **alto risco**
 > (exploração, ASN/BGP, RPZ) **não** estão nesta API — continuam só pelo agente,
 > atrás do gate de `tools/risk.py`.
+>
+> ¹ **Governança (Control Plane):** bloqueio/desbloqueio de assinante passam pelo
+> Control Plane (`core/`) — política + papel + inventário + **modo operacional**.
+> O campo `message` (compatível com antes) traz o resultado; `decision`
+> (`allow`/`deny`/`require_approval`/`dry_run_only`) e `status` (`executed`/
+> `denied`/`dry_run`/...) são **aditivos** (clientes antigos ignoram). Em modo
+> operacional `lab`/`replay`, a ação vira **dry-run** (não toca o estado real).
+> Ver `docs/control_plane.md`.
 
 ### Agente (linguagem natural)
 | Método | Rota | Body | Resposta |

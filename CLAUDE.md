@@ -60,6 +60,18 @@ interativa ou API REST.
   ajuste que ultrapasse o teto.
 - Mudanças em lógica de firewall ou playbook exigem que a suite de testes passe.
 - Nunca remover ou afrouxar o gate de confirmação de `tools/risk.py`.
+- **Control Plane / governança (`core/`):** o **modo operacional do backend**
+  (`core/operating_mode`, real/lab/replay) é a fonte da verdade da EXECUÇÃO e é
+  **separado** do modo visual do cliente Tauri (localStorage, não trafega). Em
+  `lab`/`replay`, ação que altera estado real **nunca executa** (vira dry-run) —
+  não afrouxar isso. As travas de segurança duras de `tools/asset_registry.check_target`
+  (loopback/reservado/infra própria crítica nunca são alvo de ação que altera
+  estado) **sempre** valem, independentemente de `REQUIRE_ASSET_AUTHORIZATION`.
+  A **redaction** (`core/redaction`) roda ANTES de `log_event` (a hash chain
+  hasheia o texto já redigido) — nunca logar token/senha/chave em claro, e nunca
+  alterar `_compute_entry_hash` (invalidaria eventos antigos). `NEXUS_OPERATING_MODE`,
+  `REQUIRE_ASSET_AUTHORIZATION`, `DEFAULT_ACTOR/ROLE`, `AUDIT_HMAC_SECRET` são
+  novos toggles (padrões conservadores/compatíveis — ver `config.py`).
 
 ## Convenções de código
 
@@ -88,7 +100,8 @@ interativa ou API REST.
 
 ## Onde está o quê
 
-- **Agente LangGraph:** `agents/nexus_agent.py` (184 tools registradas)
+- **Agente LangGraph:** `agents/nexus_agent.py` (190 tools registradas)
+- **Governança (Control Plane, fundações):** `core/` — `control_plane.py` (orquestra: política → auditoria → aprovação → executor; reexporta `ActionRequest/Decision/Result/Risk/Status`) · `policy_engine.py` (decisão determinística ALLOW/DENY/REQUIRE_APPROVAL/DRY_RUN_ONLY + `ACTION_CATALOG`) · `rbac.py` (papéis admin/soc_analyst/noc_operator/auditor/readonly) · `operating_mode.py` (modo do backend real/lab/replay — **fonte da verdade da execução, separada do modo visual do Tauri**) · `redaction.py` (mascara segredo antes de logar) · `models.py`. Inventário autorizado em `tools/asset_registry.py` (tabela `asset_registry`; `check_target` com travas duras p/ loopback/reservado/infra crítica). Aprovação **reaproveita** `tools/risk.py`. Integrado (vitrine) em `isolate_ip` e em `tools/noc_api.block/unblock_subscriber` (cobre a REST/Tauri). Doc + TODOs (P6 casos, P7 HMAC, P9 playbooks, integração total) em `docs/control_plane.md`.
 - **Engine de playbooks:** `tools/playbook.py`
 - **Gate de confirmação:** `tools/risk.py`
 - **Firewall abstrato:** `tools/firewall.py` → backends em `tools/firewall_backends/`

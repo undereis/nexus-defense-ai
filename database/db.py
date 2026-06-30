@@ -484,6 +484,41 @@ CREATE TABLE IF NOT EXISTS siem_state (
     last_event_id INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Inventário de ativos AUTORIZADOS (Control Plane / Prioridade 3). Distinto de
+-- `authorized_assets` (agendamento de auditoria proativa) e de `assets`
+-- (descoberta automática por scan): aqui ficam os ativos que um operador
+-- autorizou explicitamente como alvo de ação sensível, com escopo, ambiente
+-- (real/lab) e janela de validade. Sem um ativo habilitado e no escopo, uma
+-- ação sensível NÃO executa.
+CREATE TABLE IF NOT EXISTS asset_registry (
+    asset_id TEXT PRIMARY KEY,
+    asset_type TEXT NOT NULL,                    -- network|host|mikrotik|subscriber|server|sensor|honeypot|lab
+    hostname TEXT NOT NULL DEFAULT '',
+    ip TEXT NOT NULL DEFAULT '',
+    cidr TEXT NOT NULL DEFAULT '',
+    owner TEXT NOT NULL DEFAULT '',
+    environment TEXT NOT NULL DEFAULT 'real',    -- real|lab
+    authorized_scope TEXT NOT NULL DEFAULT '',   -- csv de ações permitidas, ou '*'
+    valid_from TEXT,
+    valid_until TEXT,
+    notes TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_asset_registry_ip ON asset_registry(ip);
+
+-- Estado de runtime do sistema (chave/valor). Fonte da verdade do MODO
+-- OPERACIONAL do backend (real|lab|replay) — independente do modo VISUAL do
+-- cliente Tauri, que é só localStorage do cliente e não trafega. Default vem
+-- de config.NEXUS_OPERATING_MODE; um operador pode sobrescrever em runtime.
+CREATE TABLE IF NOT EXISTS system_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -2249,3 +2284,100 @@ def list_device_outages(status: str | None = None, limit: int = 50):
             f"SELECT {cols} FROM device_outages ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Inventário de ativos autorizados (Control Plane / Prioridade 3)
+# ---------------------------------------------------------------------------
+
+_ASSET_COLS = (
+    "asset_id, asset_type, hostname, ip, cidr, owner, environment, "
+    "authorized_scope, valid_from, valid_until, notes, enabled, created_at, updated_at"
+)
+
+
+def register_asset(
+    asset_id: str, asset_type: str, *, hostname: str = "", ip: str = "", cidr: str = "",
+    owner: str = "", environment: str = "real", authorized_scope: str = "",
+    valid_from: str | None = None, valid_until: str | None = None,
+    notes: str = "", enabled: bool = True,
+) -> None:
+    """Cria/atualiza (upsert) um ativo autorizado pelo asset_id."""
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO asset_registry
+                (asset_id, asset_type, hostname, ip, cidr, owner, environment,
+                 authorized_scope, valid_from, valid_until, notes, enabled, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(asset_id) DO UPDATE SET
+                asset_type=excluded.asset_type, hostname=excluded.hostname,
+                ip=excluded.ip, cidr=excluded.cidr, owner=excluded.owner,
+                environment=excluded.environment, authorized_scope=excluded.authorized_scope,
+                valid_from=excluded.valid_from, valid_until=excluded.valid_until,
+                notes=excluded.notes, enabled=excluded.enabled, updated_at=datetime('now')
+            """,
+            (asset_id, asset_type, hostname, ip, cidr, owner, environment,
+             authorized_scope, valid_from, valid_until, notes, 1 if enabled else 0),
+        )
+
+
+def get_asset(asset_id: str):
+    with get_conn() as conn:
+        return conn.execute(
+            f"SELECT {_ASSET_COLS} FROM asset_registry WHERE asset_id = ?", (asset_id,)
+        ).fetchone()
+
+
+def list_registered_assets(enabled_only: bool = False):
+    with get_conn() as conn:
+        if enabled_only:
+            return conn.execute(
+                f"SELECT {_ASSET_COLS} FROM asset_registry WHERE enabled = 1 ORDER BY asset_id"
+            ).fetchall()
+        return conn.execute(
+            f"SELECT {_ASSET_COLS} FROM asset_registry ORDER BY asset_id"
+        ).fetchall()
+
+
+def find_assets_by_ip(ip: str):
+    """Ativos cujo campo ip bate exatamente (correspondência por CIDR é feita na
+    camada tools/asset_registry, que entende ipaddress)."""
+    with get_conn() as conn:
+        return conn.execute(
+            f"SELECT {_ASSET_COLS} FROM asset_registry WHERE ip = ? ORDER BY asset_id", (ip,)
+        ).fetchall()
+
+
+def set_asset_enabled(asset_id: str, enabled: bool) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE asset_registry SET enabled = ?, updated_at = datetime('now') WHERE asset_id = ?",
+            (1 if enabled else 0, asset_id),
+        )
+        return cur.rowcount > 0
+
+
+def remove_asset(asset_id: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM asset_registry WHERE asset_id = ?", (asset_id,))
+        return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Estado de runtime do sistema (modo operacional do backend, etc.)
+# ---------------------------------------------------------------------------
+
+def get_system_state(key: str, default: str = "") -> str:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM system_state WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def set_system_state(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, datetime('now')) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+            (key, value),
+        )
