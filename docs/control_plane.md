@@ -89,6 +89,9 @@ Usuário / API / IA
 |---|---|---|
 | **Isolar/bloquear IP** | `agents/nexus_agent.isolate_ip` | agente → control plane → `firewall.block_ip` |
 | **Bloquear/desbloquear assinante** | `tools/noc_api.block_subscriber/unblock_subscriber` | **REST `/api/...` e cliente Tauri** → control plane → `billing` |
+| **SSH remoto** (Fase 2) | `run_remote_command` | `request_action` (`ssh_command`, read-only — allowlist mantida) → `access.ssh_run_command` |
+| **Honeypot start/stop** (Fase 2) | `start_honeypot`/`stop_honeypot` | `request_action` (`honeypot_start/stop`, altera estado → dry-run em lab/replay) → `honeypot.start/stop` |
+| **Engenharia social** (Fase 2) | `generate_social_engineering_content` | overlay `precheck_runtime` (`social_engineering`; RBAC+auditoria, SEM gate — só gera texto) → `social_engineering.build_generation_request` |
 
 > Cobrir o `noc_api` fecha o bypass pela API: a governança **não vale só para o
 > agente**. Em modo lab/replay, esses endpoints viram dry-run.
@@ -137,8 +140,13 @@ prompt-injection tratada como dado inerte, e que DENY/DRY_RUN/REQUIRE_APPROVAL
   via `_governance_precheck`): RBAC + trava de segurança + modo operacional ANTES
   de criar a pendência. Em real+admin → comportamento de antes; lab/replay →
   dry-run sem pendência; alvo proibido / papel sem permissão → negado e auditado.
-  SSH (allowlist), social (só gera texto) e honeypot seguem guardados pelos
-  próprios mecanismos — roteamento explícito deles continua TODO.
+- **Roteamento explícito de SSH/social/honeypot (Fase 2)** ✅ `run_remote_command`
+  (`ssh_command`) e `start_honeypot`/`stop_honeypot` (`honeypot_start/stop`) via
+  `request_action` (honeypot altera estado → dry-run em lab/replay; SSH é
+  read-only e roda em lab); `generate_social_engineering_content` via overlay
+  `precheck_runtime` (RBAC+auditoria, SEM gate — só gera texto, envio já é manual).
+  Toggle/engagement do social e allowlist do SSH seguem valendo como defesa em
+  profundidade.
 - **RBAC real (REST)** ✅ `config.NEXUS_ROLE_TOKENS` ('papel:token') + `require_token`
   resolve o papel; ações REST (block/unblock subscriber) passam o papel ao Control
   Plane. Token principal = admin (compatível). readonly/auditor → ação negada.
@@ -147,11 +155,10 @@ prompt-injection tratada como dado inerte, e que DENY/DRY_RUN/REQUIRE_APPROVAL
 
 ## Próximos passos (TODOs)
 
-- **Roteamento explícito** de SSH/social/honeypot pelo Control Plane (hoje
-  guardados pelos próprios mecanismos).
+- ✅ ~~Roteamento explícito de SSH/social/honeypot~~ (Fase 2).
+- ✅ ~~Segredos fora do `.env`~~ — Fase 1: Keychain do macOS (`core/secrets.py`,
+  keychain-first + fallback `.env`); Vault continua como opção futura.
 - **Modo no cliente**: negociar o modo visual do Tauri com o modo operacional do
-  backend (header + decisão do servidor).
+  backend (header + decisão do servidor). — *Fase 4*
 - **RBAC mais rico**: expandir o RBAC por token para outras rotas/ações e para o
-  agente; usuários reais.
-- **Segredos**: migrar de `.env` para keychain/Vault (a redaction já evita
-  vazamento na trilha; o armazenamento seguro é a próxima camada).
+  agente; usuários reais. — *Fase 3*
