@@ -104,6 +104,15 @@ def run_selftest() -> str:
     lines.append(f"   Playbook auto-nível: {config.PLAYBOOK_AUTO_LEVEL} "
                  f"(nível 3/BGP FlowSpec NUNCA automático — _AUTO_CAP) | "
                  f"BGP: {'pipe ExaBGP configurado' if config.EXABGP_API_PIPE else 'sem pipe (não anuncia)'}")
+    def _secrets_line():
+        from core import secrets as _sec
+        st = _sec.secret_status()
+        kc = sum(1 for r in st if r["source"] == "keychain")
+        env = sum(1 for r in st if r["source"] == "env")
+        return (f"   Segredos: backend {_sec.resolve_backend()} | "
+                f"{kc} no Keychain, {env} no .env em claro "
+                f"(migrar: scripts/nexus_secrets.py migrate)")
+    lines.append(_safe(_secrets_line))
 
     lines.append("")
     lines.append("• Operação NOC (Fase 8):")

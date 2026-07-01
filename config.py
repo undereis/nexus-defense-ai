@@ -2,12 +2,19 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+from core import secrets as _secrets
+
 load_dotenv()
+
+# Segredos (tokens/senhas) são lidos via `_secrets.get_secret`: Keychain do macOS
+# primeiro, com fallback total pro .env (fail-safe — ver core/secrets.py). Já
+# valores não-secretos (hosts, portas, chat_ids, flags) seguem por `os.getenv`.
+_secret = _secrets.get_secret
 
 BASE_DIR = Path(__file__).resolve().parent
 
 CREATOR_NAME = os.getenv("CREATOR_NAME", "Criador")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY = _secret("ANTHROPIC_API_KEY")
 MODEL_NAME = os.getenv("NEXUS_MODEL", "claude-sonnet-4-6")
 
 DB_PATH = BASE_DIR / "database" / "nexus.db"
@@ -36,7 +43,7 @@ RECONCILE_POLL_INTERVAL = int(os.getenv("RECONCILE_POLL_INTERVAL", "300"))
 SSH_USER = os.getenv("SSH_USER", "")
 SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 
-API_TOKEN = os.getenv("NEXUS_API_TOKEN", "")
+API_TOKEN = _secret("NEXUS_API_TOKEN", "")
 
 # --- Governança / Control Plane ---
 # MODO OPERACIONAL do backend (fonte da verdade da EXECUÇÃO): 'real' | 'lab' |
@@ -59,7 +66,7 @@ DEFAULT_ROLE = os.getenv("NEXUS_DEFAULT_ROLE", "admin")
 # (noc_operator/soc_analyst/auditor/readonly), permitindo permissões
 # diferenciadas sem um sistema de usuários. Vazio = só o token admin. As ações
 # REST resolvem o papel pelo token e o passam ao Control Plane. NUNCA commitar.
-NEXUS_ROLE_TOKENS = os.getenv("NEXUS_ROLE_TOKENS", "")
+NEXUS_ROLE_TOKENS = _secret("NEXUS_ROLE_TOKENS", "")
 
 # Exigir ativo AUTORIZADO no inventário (asset_registry) para ações sensíveis.
 # false (padrão) = compatível com hoje: alvos que não estão no inventário são
@@ -78,7 +85,7 @@ AUTO_INCIDENT_ENABLED = os.getenv("AUTO_INCIDENT_ENABLED", "false").lower() == "
 # desligado (só a hash chain atual). Quando definido, a assinatura é gravada num
 # canal LATERAL (não altera _compute_entry_hash nem invalida eventos antigos).
 # Implementação de assinatura é etapa futura — ver docs/control_plane.md.
-AUDIT_HMAC_SECRET = os.getenv("AUDIT_HMAC_SECRET", "")
+AUDIT_HMAC_SECRET = _secret("AUDIT_HMAC_SECRET", "")
 
 # Webhook genérico para notificações fora do terminal (Slack incoming
 # webhook, Discord webhook, ou qualquer endpoint custom que aceite JSON
@@ -88,14 +95,14 @@ NOTIFY_WEBHOOK_FORMAT = os.getenv("NOTIFY_WEBHOOK_FORMAT", "slack")  # slack | d
 
 # Signing secret do Slack app (Basic Information -> Signing Secret), usado
 # para verificar que requisições em /slack/command vêm mesmo do Slack.
-SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+SLACK_SIGNING_SECRET = _secret("SLACK_SIGNING_SECRET", "")
 
 # Feeds externos de threat intelligence (todos com tier gratuito). Vazio =
 # a correlação correspondente é pulada, sem quebrar nada — igual ao padrão
 # de NOTIFY_WEBHOOK_URL acima.
-ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
-VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY", "")
-SHODAN_API_KEY = os.getenv("SHODAN_API_KEY", "")
+ABUSEIPDB_API_KEY = _secret("ABUSEIPDB_API_KEY", "")
+VIRUSTOTAL_API_KEY = _secret("VIRUSTOTAL_API_KEY", "")
+SHODAN_API_KEY = _secret("SHODAN_API_KEY", "")
 
 # Reporta automaticamente ao AbuseIPDB todo IP que a Nexus confirma
 # isolar (contamina a reputação global do atacante, sem precisar pedir).
@@ -104,7 +111,7 @@ AUTO_REPORT_ABUSEIPDB = os.getenv("AUTO_REPORT_ABUSEIPDB", "true").lower() == "t
 
 # Bot User OAuth Token (xoxb-...) + canal de destino, para postar notificações
 # direto via Slack Web API (chat.postMessage) em vez de um webhook genérico.
-SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
+SLACK_BOT_TOKEN = _secret("SLACK_BOT_TOKEN", "")
 SLACK_CHANNEL_ID = os.getenv("SLACK_CHANNEL_ID", "")
 
 # Allowlist de comandos remotos via SSH. Apenas comandos de diagnóstico
@@ -231,7 +238,7 @@ REPORT_INTERVAL_HOURS = float(os.getenv("REPORT_INTERVAL_HOURS", "24"))
 # por fora da LAN.
 MIKROTIK_HOST = os.getenv("MIKROTIK_HOST", "")
 MIKROTIK_USER = os.getenv("MIKROTIK_USER", "")
-MIKROTIK_PASSWORD = os.getenv("MIKROTIK_PASSWORD", "")
+MIKROTIK_PASSWORD = _secret("MIKROTIK_PASSWORD", "")
 MIKROTIK_PORT = int(os.getenv("MIKROTIK_PORT", "8728"))
 MIKROTIK_USE_TLS = os.getenv("MIKROTIK_USE_TLS", "false").lower() == "true"
 
@@ -292,7 +299,7 @@ DNS_CERT_WARN_DAYS = int(os.getenv("DNS_CERT_WARN_DAYS", "30"))
 BRBOS_HOST = os.getenv("BRBOS_HOST", "")
 BRBOS_PORT = int(os.getenv("BRBOS_PORT", "8080"))
 BRBOS_USER = os.getenv("BRBOS_USER", "")
-BRBOS_PASSWORD = os.getenv("BRBOS_PASSWORD", "")
+BRBOS_PASSWORD = _secret("BRBOS_PASSWORD", "")
 BRBOS_USE_TLS = os.getenv("BRBOS_USE_TLS", "false").lower() == "true"
 
 # Habilita ESCRITA no BrbOS (bloqueio de domínio via RPZ). Desativado por
@@ -321,7 +328,7 @@ BRBOS_PROTECTED_DOMAINS = os.getenv("BRBOS_PROTECTED_DOMAINS", "")
 # A análise ESTÁTICA e a extração de IOC não dependem destes toggles (não
 # executam nada). Só a detonação dinâmica é gated.
 ALLOW_MALWARE_DETONATION = os.getenv("ALLOW_MALWARE_DETONATION", "false").lower() == "true"
-MALWARE_SANDBOX_LAB_TOKEN = os.getenv("MALWARE_SANDBOX_LAB_TOKEN", "")
+MALWARE_SANDBOX_LAB_TOKEN = _secret("MALWARE_SANDBOX_LAB_TOKEN", "")
 # Backend de detonação (ex.: "cape" para CAPEv2). Vazio = nenhum wirado ainda
 # (fase 2, exige lab). Mesmo com os dois toggles acima, sem backend a
 # detonação retorna "nenhum backend configurado" em vez de rodar algo.
@@ -369,7 +376,7 @@ DEVICE_MONITOR_INTERVAL = int(os.getenv("DEVICE_MONITOR_INTERVAL", "0"))
 # Telegram — canal de notificação adicional (aditivo ao Slack/webhook). Bot
 # token (via @BotFather) + chat/grupo de destino. Vazio = Telegram desligado,
 # notificações seguem pelo Slack/webhook como sempre. NUNCA commitar o token.
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_BOT_TOKEN = _secret("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Secret token do webhook do Telegram (controle bidirecional — operar o NOC pelo
@@ -378,7 +385,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # /telegram/webhook recusa requisições que não batam. Vazio = webhook
 # bidirecional DESLIGADO (Telegram fica só outbound). Gere um valor aleatório
 # forte e NUNCA o commite. Defesa em profundidade junto da checagem de chat_id.
-TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+TELEGRAM_WEBHOOK_SECRET = _secret("TELEGRAM_WEBHOOK_SECRET", "")
 
 # --- Integração SIEM (Frente I) ---
 # Encaminha os eventos da trilha de auditoria a um SIEM externo, incremental.
@@ -389,7 +396,7 @@ TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 # já gravados — não muda nada na detecção.
 SIEM_MODE = os.getenv("SIEM_MODE", "off")
 SIEM_URL = os.getenv("SIEM_URL", "")
-SIEM_TOKEN = os.getenv("SIEM_TOKEN", "")
+SIEM_TOKEN = _secret("SIEM_TOKEN", "")
 SIEM_INDEX = os.getenv("SIEM_INDEX", "nexus-events")
 SIEM_BATCH = int(os.getenv("SIEM_BATCH", "500"))
 SIEM_FORWARD_INTERVAL = int(os.getenv("SIEM_FORWARD_INTERVAL", "60"))
