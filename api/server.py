@@ -205,6 +205,43 @@ def api_check_devices(principal: Principal = Depends(require_permission("noc.dev
     return noc_api.check_devices()
 
 
+class ModeRequest(BaseModel):
+    mode: str
+
+
+def _mode_payload() -> dict:
+    from core import operating_mode
+    return {
+        "mode": operating_mode.get_operating_mode(),
+        "allows_real_state_change": operating_mode.allows_real_state_change(),
+        "valid_modes": list(operating_mode.VALID_MODES),
+    }
+
+
+@app.get("/api/mode", dependencies=[Depends(require_token)])
+def api_get_mode():
+    """MODO OPERACIONAL EFETIVO do backend (real|lab|replay) — a fonte da verdade da
+    EXECUÇÃO. O cliente Tauri lê isto para refletir o modo REAL do motor, não só o
+    modo visual local. Qualquer token válido pode ler."""
+    return _mode_payload()
+
+
+@app.post("/api/mode")
+def api_set_mode(req: ModeRequest,
+                 principal: Principal = Depends(require_permission("system.operating_mode"))):
+    """Propõe trocar o modo operacional do backend. Só quem tem 'system.operating_mode'
+    (admin) pode — os demais recebem 403 e a UI continua refletindo o modo efetivo
+    atual. Modo inválido → 400. Auditado com a identidade real."""
+    from core import operating_mode
+    try:
+        mode = operating_mode.set_operating_mode(req.mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    log_event("operating_mode_changed", None,
+              f"mode={mode} actor={principal.actor}", action_taken="alterado via REST")
+    return _mode_payload()
+
+
 @app.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_token)])
 def chat(req: ChatRequest):
     if not req.message.strip():
