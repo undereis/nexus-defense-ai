@@ -10,12 +10,26 @@ Servir: `venv/bin/uvicorn api.server:app --host 0.0.0.0 --port 8000`
 
 ## Autenticação
 
-Header `Authorization: Bearer <NEXUS_API_TOKEN>` em todos os endpoints `/api/*`,
+Header `Authorization: Bearer <token>` em todos os endpoints `/api/*`,
 `/chat` e `/dashboard/data`. O token vem de `NEXUS_API_TOKEN` no `.env` (se
 vazio, o servidor gera um temporário e o imprime no stdout ao subir). Sem token
 ou token errado → `401`.
 
 `/health` e `/dashboard` (a casca HTML) são públicos.
+
+### Papéis (RBAC — Fase 3)
+
+Cada token resolve um **papel**: o token principal (`NEXUS_API_TOKEN`) é `admin`;
+`NEXUS_ROLE_TOKENS` no `.env` mapeia tokens para papéis com menos permissão; e
+**usuários reais** (criados com `scripts/nexus_users.py`, token gravado só como
+hash) têm papel granular. Papéis: `admin`, `soc_analyst`, `noc_operator`,
+`auditor`, `readonly`.
+
+- **Leitura** (`GET /api/*`, `/dashboard/data`): qualquer papel válido.
+- **Bloqueio/desbloqueio de assinante**: o papel vai ao Control Plane — um papel
+  sem `noc.block_subscriber` recebe `200` com `{"decision":"deny","status":"denied"}`.
+- **`POST /api/billing/run`** exige `noc.billing`; **`POST /api/devices/check`**
+  exige `noc.device_check`. Papel sem a permissão → `403`.
 
 ## Endpoints
 

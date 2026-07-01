@@ -1974,6 +1974,25 @@ def secret_status_report() -> str:
     return "\n".join(lines)
 
 
+@tool
+def list_api_users() -> str:
+    """Lista os USUÁRIOS da API REST (Fase 3 — RBAC): id, nome, papel e status
+    (ativo/revogado) — NUNCA o token nem o hash. Read-only. Criar/revogar usuário
+    e emitir token é feito pelo operador via scripts/nexus_users.py."""
+    from core import users
+    rows = users.list_users()
+    if not rows:
+        return ("Nenhum usuário da API cadastrado. O acesso hoje é só pelo token "
+                "principal (admin) e por NEXUS_ROLE_TOKENS do .env. Crie usuários "
+                "com scripts/nexus_users.py create.")
+    lines = [f"{len(rows)} usuário(s) da API:"]
+    for u in rows:
+        status = "ativo" if u["enabled"] else "revogado"
+        lines.append(f"  {u['user_id']}  papel={u['role']:13} {status:9} "
+                     f"token={u['token_hint']}  {u['name']}")
+    return "\n".join(lines)
+
+
 # ---------------- Casos / incidentes (Prioridade 6) ----------------
 
 @tool
@@ -2268,6 +2287,7 @@ TOOLS = [
     set_operating_mode,
     evaluate_action_policy,
     secret_status_report,
+    list_api_users,
     open_incident,
     list_incidents,
     incident_report,
