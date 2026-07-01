@@ -158,7 +158,10 @@ prompt-injection tratada como dado inerte, e que DENY/DRY_RUN/REQUIRE_APPROVAL
 - ✅ ~~Roteamento explícito de SSH/social/honeypot~~ (Fase 2).
 - ✅ ~~Segredos fora do `.env`~~ — Fase 1: Keychain do macOS (`core/secrets.py`,
   keychain-first + fallback `.env`); Vault continua como opção futura.
+- ✅ ~~RBAC mais rico + usuários reais~~ — Fase 3: `core/users.py` + tabela
+  `api_users` (token hasheado), `Principal`/`require_permission` no `api/server`,
+  RBAC em billing/devices, CLI `scripts/nexus_users.py`. Resta propagar a
+  identidade do chamador da API para as ações do AGENTE (hoje o agente age como
+  admin independentemente do token REST) — próxima camada.
 - **Modo no cliente**: negociar o modo visual do Tauri com o modo operacional do
   backend (header + decisão do servidor). — *Fase 4*
-- **RBAC mais rico**: expandir o RBAC por token para outras rotas/ações e para o
-  agente; usuários reais. — *Fase 3*

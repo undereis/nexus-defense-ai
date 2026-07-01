@@ -520,6 +520,24 @@ CREATE TABLE IF NOT EXISTS system_state (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Usuários da API REST (Fase 3 — RBAC rico). Identidade real por trás de cada
+-- token: id + nome + papel (rbac.ROLES) + token HASHEADO (sha256). O valor cru
+-- do token NUNCA é gravado (só o hash e uma dica p/ identificar). O api/server
+-- resolve token->papel AQUI depois do token principal e dos NEXUS_ROLE_TOKENS do
+-- .env (compatível). enabled=0 + revoked_at revoga o acesso.
+CREATE TABLE IF NOT EXISTS api_users (
+    user_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'readonly',
+    token_hash TEXT NOT NULL,
+    token_hint TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    revoked_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_users_token_hash ON api_users(token_hash);
+
 -- Casos / incidentes (Prioridade 6). Fundação de incident management: agrega
 -- evidências, timeline, ações tomadas e eventos relacionados num caso com
 -- ciclo de vida (open→investigating→contained→resolved|false_positive). Campos
@@ -2417,6 +2435,52 @@ def set_system_state(key: str, value: str) -> None:
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
             (key, value),
         )
+
+
+# ---------------------------------------------------------------------------
+# Usuários da API REST (Fase 3 — RBAC rico). O token cru NUNCA entra aqui:
+# o chamador passa o hash. Leitura devolve metadados, nunca o hash nem o token.
+# ---------------------------------------------------------------------------
+
+_API_USER_COLS = "user_id, name, role, token_hint, enabled, created_at, revoked_at"
+
+
+def create_api_user(user_id: str, name: str, role: str, token_hash: str, token_hint: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO api_users (user_id, name, role, token_hash, token_hint) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (user_id, name, role, token_hash, token_hint),
+        )
+
+
+def get_api_user_by_token_hash(token_hash: str):
+    """Usuário ATIVO (enabled=1) cujo token_hash bate. Devolve (user_id, name,
+    role) ou None. Não retorna o hash."""
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT user_id, name, role FROM api_users WHERE token_hash = ? AND enabled = 1",
+            (token_hash,),
+        ).fetchone()
+
+
+def list_api_users():
+    """Metadados de todos os usuários (NUNCA o token nem o hash)."""
+    with get_conn() as conn:
+        return conn.execute(
+            f"SELECT {_API_USER_COLS} FROM api_users ORDER BY created_at"
+        ).fetchall()
+
+
+def revoke_api_user(user_id: str) -> bool:
+    """Desativa um usuário (enabled=0 + revoked_at). True se algo mudou."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE api_users SET enabled = 0, revoked_at = datetime('now') "
+            "WHERE user_id = ? AND enabled = 1",
+            (user_id,),
+        )
+        return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------
