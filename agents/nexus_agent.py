@@ -670,14 +670,30 @@ def start_honeypot(service: str = "ssh", port: int = 0) -> str:
     cookie mstshash quando presente — não captura login completo).
     Qualquer IP que conectar é tratado como ataque confirmado e isolado
     automaticamente, sem threshold. Se port=0, usa a porta padrão."""
-    return honeypot.start(service, port)
+    # Roteado pelo Control Plane: abrir uma porta ALTERA estado, então em modo
+    # lab/replay isto vira dry-run (não abre porta real) + auditoria + RBAC
+    # ('defense.honeypot'). Em modo real com admin, comportamento de antes.
+    from core import control_plane as cp
+
+    def _do(service, port):
+        return honeypot.start(service, port)
+
+    req = cp.make_request("honeypot_start", params={"service": service, "port": port})
+    return cp.request_action(req, executor=_do, tool_name="cp_honeypot_start").output
 
 
 @tool
 def stop_honeypot(service: str = "", port: int = 0) -> str:
     """Para honeypot(s). Sem argumentos, para todos os honeypots ativos.
     Com service e/ou port, para só o(s) que combinar com os critérios."""
-    return honeypot.stop(service or None, port or None)
+    # Roteado pelo Control Plane (mesma governança do start_honeypot).
+    from core import control_plane as cp
+
+    def _do(service, port):
+        return honeypot.stop(service or None, port or None)
+
+    req = cp.make_request("honeypot_stop", params={"service": service, "port": port})
+    return cp.request_action(req, executor=_do, tool_name="cp_honeypot_stop").output
 
 
 @tool
@@ -1076,6 +1092,18 @@ def generate_social_engineering_content(
     LIMITE ABSOLUTO: você gera texto, nunca envia e-mail/SMS, nunca liga
     para ninguém, nunca interage com a pessoa-alvo. O envio/contato real
     é sempre uma ação manual do criador, depois de revisar o conteúdo."""
+    # Overlay de governança (RBAC 'social.generate' + auditoria) SEM gate de
+    # aprovação: a tool só GERA texto e o envio real já é manual do operador —
+    # aprovação na geração seria fricção sem proteger o risco real. O toggle
+    # ALLOW_SOCIAL_ENGINEERING + engagement_reference seguem checados abaixo por
+    # build_generation_request (mesma filosofia das tools ofensivas gated).
+    from core import control_plane as cp
+    from core.models import Decision
+
+    req = cp.make_request("social_engineering", engagement_reference=engagement_reference)
+    dec = cp.precheck_runtime(req)
+    if dec.decision is Decision.DENY:
+        return f"NEGADO pela governança: {dec.reason}"
     return social_engineering.build_generation_request(scenario_type, context, engagement_reference)
 
 
@@ -1155,7 +1183,19 @@ def run_remote_command(host: str, command: str, user: str = "", port: int = 22) 
     'docker ps'). Usa autenticação por chave configurada em SSH_KEY_PATH.
     Toda execução é registrada para auditoria. Nunca use em hosts que o
     criador não autorizou explicitamente."""
-    return access.ssh_run_command(host, command, user, port)
+    # Roteado pelo Control Plane (RBAC 'investigate.ssh' + auditoria). Read-only
+    # (changes_state=False) → a allowlist de access.ssh_run_command segue valendo
+    # como defesa em profundidade; em modo real com admin, comportamento de antes.
+    from core import control_plane as cp
+
+    def _do(host, command, user, port):
+        return access.ssh_run_command(host, command, user, port)
+
+    req = cp.make_request(
+        "ssh_command", target=host,
+        params={"host": host, "command": command, "user": user, "port": port},
+    )
+    return cp.request_action(req, executor=_do, tool_name="cp_ssh_command").output
 
 
 @tool
