@@ -1913,6 +1913,27 @@ def evaluate_action_policy(action_type: str, target: str = "", role: str = "") -
     )
 
 
+@tool
+def secret_status_report() -> str:
+    """Mostra a ORIGEM de cada segredo (Keychain do macOS | .env | ausente) e o backend
+    ativo — SEM revelar nenhum valor. Read-only. Útil para conferir a migração de segredos
+    do .env em claro para o Keychain (feita pelo operador via scripts/nexus_secrets.py)."""
+    from core import secrets
+    st = secrets.secret_status()
+    kc = sum(1 for r in st if r["source"] == "keychain")
+    env = sum(1 for r in st if r["source"] == "env")
+    lines = [
+        f"Backend de segredos: {secrets.resolve_backend()} "
+        f"(Keychain disponível: {secrets.keychain_available()})",
+        f"{kc} no Keychain · {env} no .env em claro · "
+        f"{len(st) - kc - env} ausentes",
+        "",
+    ]
+    for r in st:
+        lines.append(f"  {r['name']:28} {r['source']:9} {'✓' if r['present'] else '—'}")
+    return "\n".join(lines)
+
+
 # ---------------- Casos / incidentes (Prioridade 6) ----------------
 
 @tool
@@ -2206,6 +2227,7 @@ TOOLS = [
     get_operating_mode,
     set_operating_mode,
     evaluate_action_policy,
+    secret_status_report,
     open_incident,
     list_incidents,
     incident_report,

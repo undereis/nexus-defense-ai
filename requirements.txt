@@ -13,3 +13,4 @@ librouteros
 pdfplumber
 reportlab
 ruff
+keyring
