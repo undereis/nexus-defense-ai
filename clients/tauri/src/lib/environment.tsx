@@ -1,5 +1,4 @@
-// Estado de AMBIENTE da interface — conceito puramente de frontend (não toca o
-// backend). Define em qual "modo" o operador está visualizando:
+// Estado de AMBIENTE da interface. Define em qual "modo" o operador está:
 //
 //   real    — usa exclusivamente os dados reais retornados pela API.
 //   lab     — demonstração visual de UX; qualquer conteúdo sem origem na API
@@ -8,16 +7,23 @@
 //   replay  — reprodução de eventos passados; indisponível na API atual
 //             (preparado conceitualmente, sem backend novo nem dado simulado).
 //
-// A escolha é persistida em localStorage e NUNCA fabrica telemetria como se
-// fosse real — apenas muda como a ausência/origem dos dados é apresentada.
+// Fase 4 — SINCRONIZAÇÃO com o motor: quando o backend está online, este modo
+// reflete o MODO OPERACIONAL EFETIVO do motor (GET /api/mode), e trocá-lo pelo
+// pill PROPÕE a mudança ao backend (POST /api/mode, gated por RBAC). Offline, cai
+// para o modo apenas-visual persistido em localStorage. Em nenhum caso fabrica
+// telemetria como se fosse real — só muda como a ausência/origem é apresentada.
 
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 
 export type EnvMode = "real" | "lab" | "replay";
 
 export interface EnvCtx {
-  mode: EnvMode;
-  setMode: (m: EnvMode) => void;
+  mode: EnvMode;                 // modo EXIBIDO (== motor quando sincronizado)
+  setMode: (m: EnvMode) => void; // define localmente (visual/otimista, offline)
+  backendMode: EnvMode | null;   // modo do MOTOR reportado pela API (null = desconhecido)
+  backendSynced: boolean;        // mode reflete o modo real do motor?
+  modeError: string | null;      // erro da última troca de modo do motor (ex.: 403)
+  reportBackend: (mode: EnvMode | null, error?: string | null) => void; // motor -> UI
 }
 
 const Ctx = createContext<EnvCtx | null>(null);
@@ -36,11 +42,32 @@ export function useEnvironment(): EnvCtx {
 
 export function EnvironmentProvider({ children }: { children: ReactNode }) {
   const [mode, setModeState] = useState<EnvMode>(initialMode);
+  const [backendMode, setBackendMode] = useState<EnvMode | null>(null);
+  const [modeError, setModeError] = useState<string | null>(null);
+
   const setMode = useCallback((m: EnvMode) => {
     localStorage.setItem(KEY, m);
     setModeState(m);
   }, []);
-  return <Ctx.Provider value={{ mode, setMode }}>{children}</Ctx.Provider>;
+
+  // O motor reporta seu modo efetivo (ou null se inacessível). Quando conhecido,
+  // a UI é ALINHADA a ele — o pill passa a mostrar a verdade do backend.
+  const reportBackend = useCallback((bm: EnvMode | null, error: string | null = null) => {
+    setBackendMode(bm);
+    setModeError(error);
+    if (bm) {
+      localStorage.setItem(KEY, bm);
+      setModeState(bm);
+    }
+  }, []);
+
+  const backendSynced = backendMode !== null && backendMode === mode;
+
+  return (
+    <Ctx.Provider value={{ mode, setMode, backendMode, backendSynced, modeError, reportBackend }}>
+      {children}
+    </Ctx.Provider>
+  );
 }
 
 export const MODE_LABEL: Record<EnvMode, string> = {

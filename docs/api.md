@@ -53,8 +53,19 @@ hash) têm papel granular. Papéis: `admin`, `soc_analyst`, `noc_operator`,
 |---|---|---|---|
 | POST | `/api/subscribers/{id}/block` | `reason=...` | `{"message":"...", "decision":"allow", "status":"executed"}` ¹ |
 | POST | `/api/subscribers/{id}/unblock` | `reason=...` | `{"message":"...", "decision":"...", "status":"..."}` ¹ |
-| POST | `/api/billing/run` | `dry_run=true` | `{"message":"..."}` (dry_run só lista; cap de segurança vale) |
-| POST | `/api/devices/check` | — | `{"transitions":["DOWN d1 (10.0.0.1)", ...]}` |
+| POST | `/api/billing/run` | `dry_run=true` | `{"message":"..."}` (dry_run só lista; cap de segurança vale) — exige `noc.billing` (403 senão) |
+| POST | `/api/devices/check` | — | `{"transitions":["DOWN d1 (10.0.0.1)", ...]}` — exige `noc.device_check` (403 senão) |
+
+### Modo operacional do motor (Fase 4)
+| Método | Rota | Body | Resposta |
+|---|---|---|---|
+| GET | `/api/mode` | — | `{"mode":"real\|lab\|replay","allows_real_state_change":bool,"valid_modes":[...]}` (qualquer token) |
+| POST | `/api/mode` | `{"mode":"lab"}` | idem GET, com o modo efetivo. Exige `system.operating_mode` (admin) → 403 senão; modo inválido → 400 |
+
+> O modo do motor é a **fonte da verdade da EXECUÇÃO** (em `lab`/`replay`, ações
+> que alteram estado real viram dry-run). O cliente Tauri lê `GET /api/mode` para
+> refletir o modo EFETIVO e usa `POST /api/mode` para propor a troca (o pill
+> Real/Lab/Replay). Toda troca é auditada com a identidade real.
 
 > As ações reaproveitam a guarda e a auditoria dos módulos: bloqueio recusa IP
 > de infraestrutura, é idempotente e fica na hash-chain. Ações de **alto risco**

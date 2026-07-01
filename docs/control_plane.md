@@ -163,5 +163,10 @@ prompt-injection tratada como dado inerte, e que DENY/DRY_RUN/REQUIRE_APPROVAL
   RBAC em billing/devices, CLI `scripts/nexus_users.py`. Resta propagar a
   identidade do chamador da API para as ações do AGENTE (hoje o agente age como
   admin independentemente do token REST) — próxima camada.
-- **Modo no cliente**: negociar o modo visual do Tauri com o modo operacional do
-  backend (header + decisão do servidor). — *Fase 4*
+- ✅ ~~Modo no cliente sincronizado com o backend~~ — Fase 4: `GET/POST /api/mode`
+  (leitura por qualquer token; escrita gated por `system.operating_mode` = admin,
+  auditada); o cliente Tauri puxa o modo efetivo e o pill Real/Lab/Replay propõe a
+  troca, refletindo o que o motor aceitou. O modo visual do cliente agora ESPELHA
+  o modo operacional do backend quando online (offline: cai para visual local).
+- **Segredos em Vault** (além do Keychain da Fase 1) e **propagar a identidade do
+  chamador REST para as ações do agente** seguem como camadas futuras.

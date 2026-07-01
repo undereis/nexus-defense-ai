@@ -64,9 +64,17 @@ desbloquear assinante) exigem **confirmação explícita** antes de chamar a API
 
 O projeto ainda não está conectado a hardware/laboratório real. Para ser honesto
 sobre a origem dos dados, a interface opera em três modos, alternáveis pelo
-seletor na **Topbar** (e descritos em **Configurações → Ambiente**). A escolha é
-puramente de frontend (salva em `localStorage`) e **nunca fabrica telemetria como
-se fosse real** — só muda como a ausência/origem dos dados é apresentada.
+seletor na **Topbar** (e descritos em **Configurações → Ambiente**). O modo
+**nunca fabrica telemetria como se fosse real** — só muda como a ausência/origem
+dos dados é apresentada.
+
+**Sincronização com o motor (Fase 4):** quando o backend está online, o seletor
+reflete o **modo operacional efetivo do motor** (`GET /api/mode`) e trocá-lo
+**propõe** a mudança ao backend (`POST /api/mode`, gated por RBAC — só `admin`;
+auditado). A UI mostra o modo que o motor de fato aceitou (em `lab`/`replay` o
+backend faz dry-run de ações que alteram estado). Sem backend/permissão, o
+seletor cai para o modo **apenas-visual** persistido em `localStorage` (com a
+borda indicando "não sincronizado").
 
 | Modo | O que faz |
 |---|---|

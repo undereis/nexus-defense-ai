@@ -61,10 +61,13 @@ interativa ou API REST.
 - Mudanças em lógica de firewall ou playbook exigem que a suite de testes passe.
 - Nunca remover ou afrouxar o gate de confirmação de `tools/risk.py`.
 - **Control Plane / governança (`core/`):** o **modo operacional do backend**
-  (`core/operating_mode`, real/lab/replay) é a fonte da verdade da EXECUÇÃO e é
-  **separado** do modo visual do cliente Tauri (localStorage, não trafega). Em
+  (`core/operating_mode`, real/lab/replay) é a fonte da verdade da EXECUÇÃO. Em
   `lab`/`replay`, ação que altera estado real **nunca executa** (vira dry-run) —
-  não afrouxar isso. As travas de segurança duras de `tools/asset_registry.check_target`
+  não afrouxar isso. **Fase 4:** o cliente Tauri agora SINCRONIZA com esse modo
+  via `GET/POST /api/mode` (o pill reflete/propõe o modo efetivo do motor; escrita
+  gated por `system.operating_mode`=admin, auditada); offline, o cliente cai para
+  modo apenas-visual (localStorage). O backend segue sendo a fonte da verdade — a
+  UI espelha, não decide. As travas de segurança duras de `tools/asset_registry.check_target`
   (loopback/reservado/infra própria crítica nunca são alvo de ação que altera
   estado) **sempre** valem, independentemente de `REQUIRE_ASSET_AUTHORIZATION`.
   A **redaction** (`core/redaction`) roda ANTES de `log_event` (a hash chain

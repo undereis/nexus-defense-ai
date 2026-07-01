@@ -10,18 +10,21 @@ import { fetch } from "@tauri-apps/plugin-http";
 export class NexusApi {
   constructor(public baseUrl: string, public token: string) {}
 
-  private async req(method: "GET" | "POST", path: string): Promise<any> {
+  private async req(method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
     const url = this.baseUrl.replace(/\/+$/, "") + path;
-    const res = await fetch(url, {
-      method,
-      headers: { Authorization: `Bearer ${this.token}` },
-    });
+    const headers: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    const init: Record<string, unknown> = { method, headers };
+    if (body !== undefined) {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, init);
     if (res.status === 401) {
       throw new Error("Token inválido ou ausente (HTTP 401).");
     }
     if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
     }
     return res.json();
   }
@@ -51,4 +54,8 @@ export class NexusApi {
   checkDevices() {
     return this.req("POST", "/api/devices/check");
   }
+
+  // --- modo operacional do motor (backend) ---
+  getMode() { return this.req("GET", "/api/mode"); }
+  setMode(mode: string) { return this.req("POST", "/api/mode", { mode }); }
 }

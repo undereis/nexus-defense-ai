@@ -372,6 +372,9 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .mode-opt.active.real { color: var(--ok); border-color: #1c4d3b; background: rgba(46, 230, 160, .1); }
 .mode-opt.active.lab { color: var(--warn); border-color: #4a3a12; background: rgba(244, 191, 79, .1); }
 .mode-opt.active.replay { color: var(--info); border-color: #103a4d; background: rgba(56, 189, 248, .1); }
+/* Fase 4 — cue de sincronização com o modo do motor (backend). */
+.mode-seg[data-synced="1"] { border-color: #1c4d3b; }
+.mode-seg[data-error="1"] { border-color: #5b3535; }
 
 /* faixa global de fonte de dados (sob a Topbar) */
 .ds-banner {
