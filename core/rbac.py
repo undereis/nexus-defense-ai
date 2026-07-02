@@ -14,9 +14,21 @@ ainda aplica risco, toggles (ALLOW_*), modo operacional e aprovação humana. Ou
 seja, ter a permissão é necessário, não suficiente, para ações sensíveis.
 """
 
+from dataclasses import dataclass
+
 import config
 
 ROLES: tuple[str, ...] = ("admin", "soc_analyst", "noc_operator", "auditor", "readonly")
+
+
+@dataclass(frozen=True)
+class Principal:
+    """Identidade EFETIVA de quem pede uma ação: `actor` (quem — ex.: 'user:Ana',
+    'api:main', 'local_admin') + `role` (papel RBAC). Tipo canônico reutilizado
+    pela API (resolução do token) e propagado ao Control Plane (Fase 2)."""
+
+    actor: str
+    role: str
 
 # Conjunto de permissões por papel. "*" = tudo; "<prefixo>.*" = todo o grupo.
 ROLE_PERMISSIONS: dict[str, set[str]] = {

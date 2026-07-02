@@ -21,6 +21,9 @@ comportamento permitido é o mesmo de hoje — a diferença é que agora toda de
 Os nomes pedidos são reexportados aqui para quem importar de core.control_plane.
 """
 
+import contextvars
+from contextlib import contextmanager
+
 from core import rbac
 from core.models import (  # reexport
     ActionDecision,
@@ -37,19 +40,58 @@ from database.db import log_event
 __all__ = [
     "ActionRequest", "ActionDecision", "ActionResult", "ActionRisk", "ActionStatus",
     "Decision", "evaluate", "request_action", "make_request",
+    "get_current_principal", "principal_context",
 ]
+
+
+# --- Identidade EFETIVA durante a execução (Fase 2) ---
+# ContextVar do Principal ativo. É setado por quem tem a identidade real (ex.:
+# api/server -> ask_agent no /chat) e lido por `make_request` para preencher
+# actor/role quando não vierem explícitos. ContextVar isola por thread/tarefa
+# async — o Principal de uma execução NÃO vaza para outra concorrente. Default
+# None = "nenhuma identidade propagada" (caminho direto/CLI decide o fallback).
+_current_principal: contextvars.ContextVar = contextvars.ContextVar(
+    "nexus_current_principal", default=None
+)
+
+
+def get_current_principal():
+    """Principal ativo neste contexto de execução, ou None se nenhum foi setado."""
+    return _current_principal.get()
+
+
+@contextmanager
+def principal_context(principal):
+    """Seta o Principal ativo enquanto o bloco roda e o RESETA ao sair (mesmo em
+    exceção). Use ao redor da execução do agente para propagar a identidade real
+    às tools/Control Plane sem passar argumento por todas as 200+ tools."""
+    token = _current_principal.set(principal)
+    try:
+        yield
+    finally:
+        _current_principal.reset(token)
 
 
 def make_request(action_type: str, target: str = "", *, actor: str = "", role: str = "",
                  params: dict | None = None, environment: str = "",
                  engagement_reference: str = "", reason: str = "") -> ActionRequest:
-    """Monta um ActionRequest preenchendo ator/papel padrão (local_admin/admin)
-    quando não informados — compatível com o token único atual."""
+    """Monta um ActionRequest resolvendo a identidade nesta ORDEM (Fase 2):
+
+      1. `actor`/`role` explícitos (ex.: rotas REST que já passam o papel do token);
+      2. Principal ATIVO no contexto (propagado por `principal_context` — ex.: o
+         /chat seta o Principal do token antes de invocar o agente);
+      3. fallback `local_admin`/`admin` — só quando NÃO há identidade propagada
+         (caminho local/CLI/direto). A API sempre propaga um Principal, então uma
+         requisição de API nunca cai neste fallback como admin.
+    """
+    current = get_current_principal()
+    resolved_actor = actor or (current.actor if current else rbac.default_actor())
+    resolved_role = role or (current.role if current else rbac.default_role())
     return ActionRequest(
         action_type=action_type,
         target=target or "",
-        actor=actor or rbac.default_actor(),
-        role=role or rbac.default_role(),
+        actor=resolved_actor,
+        role=resolved_role,
         params=params or {},
         environment=environment or "",
         engagement_reference=engagement_reference or "",
