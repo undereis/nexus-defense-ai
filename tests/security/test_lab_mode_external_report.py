@@ -1,8 +1,8 @@
-"""Risco crítico #1 (variação externa) — lab NÃO pode fazer chamada externa real.
+"""Risco crítico #1 (variação externa) — lab NÃO faz chamada externa real.
 
-`tools/threat_feeds.report_to_abuseipdb` reporta o IP ao AbuseIPDB (POST público que
-contamina a reputação GLOBAL). Em modo lab/replay isso deveria virar no-op. HOJE ele
-ignora o modo — por isso o teste de lab é xfail(strict=True).
+CINTO DE MODO (Fase 1B) aplicado: `tools/threat_feeds.report_to_abuseipdb` consulta o
+modo e vira no-op em lab/replay (reportar contamina a reputação GLOBAL do IP). O teste
+de lab, que na Fase 1A era xfail, agora é NORMAL e passa.
 
 Nenhuma chamada externa real acontece: o cliente HTTP é substituído por um FAKE, e a
 chave é fake (não sai do processo). O teste força a chave preenchida DE PROPÓSITO para
@@ -41,9 +41,6 @@ def fake_requests(monkeypatch):
     return fake
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "BYPASS Fase 0: report_to_abuseipdb não consulta operating_mode; em LAB ele faz o "
-    "POST externo (contamina a reputação global). A Fase A deve virar no-op em lab/replay."))
 def test_lab_mode_abuseipdb_must_not_call_external(fake_requests):
     operating_mode.set_operating_mode("lab")
     threat_feeds.report_to_abuseipdb("203.0.113.5", [14], "teste")

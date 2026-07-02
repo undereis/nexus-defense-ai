@@ -36,3 +36,17 @@ def allows_real_state_change() -> bool:
     """True só no modo 'real'. Em 'lab'/'replay', ações que ALTERAM ESTADO real
     não executam (leitura/refresh continuam permitidas)."""
     return get_operating_mode() == "real"
+
+
+def current_mode_safe() -> str:
+    """Modo operacional atual, À PROVA DE FALHA: 'real' | 'lab' | 'replay', ou
+    'unknown' se não for possível determinar (ex.: DB indisponível). NUNCA levanta.
+
+    É o que o "cinto de modo" das primitivas usa (Fase 1B): qualquer valor
+    diferente de 'real' faz a ação real virar no-op — inclusive 'unknown'
+    (conservador: na dúvida, NÃO altera estado real). Defesa em profundidade,
+    NÃO substitui o Control Plane."""
+    try:
+        return get_operating_mode()
+    except Exception:
+        return "unknown"
