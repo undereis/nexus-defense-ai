@@ -8,7 +8,6 @@ Rodar: ./venv/bin/uvicorn api.server:app --host 127.0.0.1 --port 8000
 """
 
 import secrets
-from dataclasses import dataclass
 from urllib.parse import parse_qs
 
 import requests
@@ -21,6 +20,7 @@ from agents.runtime import ask_agent
 from config import API_TOKEN, NEXUS_ROLE_TOKENS, SLACK_SIGNING_SECRET
 from core import rbac
 from core import users as api_users
+from core.rbac import Principal
 from database.db import init_db, log_event
 from tools import dashboard, noc_api, noc_commands, telegram
 from tools.slack_verify import verify_signature
@@ -55,13 +55,6 @@ def _role_token_map() -> dict[str, str]:
 
 
 _ROLE_TOKENS = _role_token_map()
-
-
-@dataclass(frozen=True)
-class Principal:
-    """Quem está por trás do token: identidade (actor) + papel (RBAC)."""
-    actor: str
-    role: str
 
 
 def _resolve_principal(token: str) -> Principal | None:
@@ -242,11 +235,14 @@ def api_set_mode(req: ModeRequest,
     return _mode_payload()
 
 
-@app.post("/chat", response_model=ChatResponse, dependencies=[Depends(require_token)])
-def chat(req: ChatRequest):
+@app.post("/chat", response_model=ChatResponse)
+def chat(req: ChatRequest, principal: Principal = Depends(require_token)):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Mensagem vazia.")
-    reply = ask_agent(req.message)
+    # Propaga a identidade REAL do token ao agente: as tools/Control Plane rodam
+    # sob este Principal (RBAC), não mais como admin implícito. Um token readonly
+    # não consegue executar ação de escrita através do /chat.
+    reply = ask_agent(req.message, principal=principal)
     return ChatResponse(reply=reply)
 
 
