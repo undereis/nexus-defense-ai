@@ -54,7 +54,7 @@ def test_wrong_secret_rejected(configured, client):
 
 def test_unauthorized_chat_ignored(configured, client, monkeypatch):
     called, sent = [], []
-    monkeypatch.setattr(server, "ask_agent", lambda t: called.append(t) or "resp")
+    monkeypatch.setattr(server, "ask_agent", lambda t, **k: called.append(t) or "resp")
     monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
 
     r = client.post("/telegram/webhook", json=_msg("/block c1", chat_id=999),
@@ -71,7 +71,7 @@ def test_unauthorized_chat_ignored(configured, client, monkeypatch):
 
 def test_authorized_command_dispatched_and_answered(configured, client, monkeypatch):
     sent = []
-    monkeypatch.setattr(server, "ask_agent", lambda t: f"eco:{t}")
+    monkeypatch.setattr(server, "ask_agent", lambda t, **k: f"eco:{t}")
     monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
 
     # 'ping' não é comando de fast-path -> normalize + dispatch ao agente
@@ -86,7 +86,7 @@ def test_authorized_command_dispatched_and_answered(configured, client, monkeypa
 def test_status_uses_fast_path_without_agent(configured, client, monkeypatch):
     """/status deve responder pelo fast-path (NOC) SEM invocar o agente (LLM)."""
     called, sent = [], []
-    monkeypatch.setattr(server, "ask_agent", lambda t: called.append(t) or "NÃO DEVIA")
+    monkeypatch.setattr(server, "ask_agent", lambda t, **k: called.append(t) or "NÃO DEVIA")
     monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
 
     r = client.post("/telegram/webhook", json=_msg("/status"), headers={_HDR: "s3cr3t"})
@@ -98,7 +98,7 @@ def test_status_uses_fast_path_without_agent(configured, client, monkeypatch):
 
 def test_natural_language_falls_back_to_agent(configured, client, monkeypatch):
     sent = []
-    monkeypatch.setattr(server, "ask_agent", lambda t: f"eco:{t}")
+    monkeypatch.setattr(server, "ask_agent", lambda t, **k: f"eco:{t}")
     monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
 
     r = client.post("/telegram/webhook", json=_msg("quantos assinantes bloqueados?"),
@@ -110,7 +110,7 @@ def test_natural_language_falls_back_to_agent(configured, client, monkeypatch):
 
 def test_non_text_update_ignored(configured, client, monkeypatch):
     sent = []
-    monkeypatch.setattr(server, "ask_agent", lambda t: "resp")
+    monkeypatch.setattr(server, "ask_agent", lambda t, **k: "resp")
     monkeypatch.setattr(telegram, "send_telegram_to", lambda cid, t: sent.append((cid, t)) or True)
 
     r = client.post("/telegram/webhook",

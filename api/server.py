@@ -246,9 +246,18 @@ def chat(req: ChatRequest, principal: Principal = Depends(require_token)):
     return ChatResponse(reply=reply)
 
 
+# Service principals das integrações externas (Fase 2B). Conservadores por padrão:
+# Telegram/Slack respondem PERGUNTAS (tools de leitura), mas NÃO podem executar
+# ação de escrita pelo agente — o papel readonly faz a Policy Engine negar. Não é
+# admin, não tem "*". Para permitir ações por uma integração, é uma decisão
+# DELIBERADA futura (atribuir um papel específico), nunca cair em admin implícito.
+_TELEGRAM_PRINCIPAL = Principal("integration:telegram", "readonly")
+_SLACK_PRINCIPAL = Principal("integration:slack", "readonly")
+
+
 def _answer_and_callback(text: str, response_url: str):
     try:
-        reply = ask_agent(text)
+        reply = ask_agent(text, principal=_SLACK_PRINCIPAL)
     except Exception as exc:
         reply = f"Tive um erro processando isso: {exc}"
     try:
@@ -292,7 +301,7 @@ def _telegram_answer(text: str, chat_id):
     reply = noc_commands.handle_command(text)
     if reply is None:
         try:
-            reply = ask_agent(text)
+            reply = ask_agent(text, principal=_TELEGRAM_PRINCIPAL)
         except Exception as exc:
             reply = f"Tive um erro processando isso: {exc}"
     telegram.send_telegram_to(chat_id, reply)
