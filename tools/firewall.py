@@ -16,6 +16,7 @@ manualmente (ver aviso no módulo do backend).
 import ipaddress
 import platform
 
+from core import operating_mode
 from database.db import (
     log_event,
     list_rate_limited_ips,
@@ -52,6 +53,26 @@ def _validate_cidr(cidr: str) -> str:
     return str(ipaddress.ip_network(cidr, strict=False))
 
 
+def _dry_run_if_not_real(action_desc: str, target: str) -> str | None:
+    """CINTO DE MODO (Fase 1B) — defesa em profundidade, NÃO substitui o Control
+    Plane. Em modo operacional 'lab'/'replay' (ou indeterminado), retorna a
+    mensagem de no-op para a primitiva devolver SEM tocar o backend real; em
+    'real' retorna None (segue a execução normal). Conservador: na dúvida, no-op.
+    Audita o dry-run para deixar rastro. Nunca levanta."""
+    mode = operating_mode.current_mode_safe()
+    if mode == "real":
+        return None
+    log_event(
+        "firewall_dry_run", target,
+        f"action={action_desc} mode={mode}",
+        action_taken="no-op (modo não altera estado real)",
+    )
+    return (
+        f"[dry-run] {action_desc} de {target} NÃO executado — modo operacional "
+        f"'{mode}' não altera estado real (cinto de modo / defesa em profundidade)."
+    )
+
+
 def setup_firewall() -> str:
     """Configura o backend de firewall da plataforma atual. Idempotente.
     Requer sudo."""
@@ -60,6 +81,9 @@ def setup_firewall() -> str:
 
 def block_ip(ip: str, reason: str = "") -> str:
     ip = _validate_ip(ip)
+    dry = _dry_run_if_not_real("bloqueio", ip)
+    if dry is not None:
+        return dry
     backend = _require_backend()
     log_event("firewall_block_attempt", ip, f"reason={reason!r}", action_taken="executando")
     result = backend.block(ip)
@@ -73,6 +97,9 @@ def block_ip(ip: str, reason: str = "") -> str:
 
 def unblock_ip(ip: str) -> str:
     ip = _validate_ip(ip)
+    dry = _dry_run_if_not_real("desbloqueio", ip)
+    if dry is not None:
+        return dry
     backend = _require_backend()
     log_event("firewall_unblock_attempt", ip, "", action_taken="executando")
     result = backend.unblock(ip)
@@ -98,6 +125,9 @@ def rate_limit_ip(ip: str, reason: str = "", connections_per_second: int = 10) -
     antes de decidir por isolamento completo. No pf: max 20 conn/5s com
     auto-promoção para bloqueio se exceder. No Linux: hashlimit 30/min."""
     ip = _validate_ip(ip)
+    dry = _dry_run_if_not_real("rate limit", ip)
+    if dry is not None:
+        return dry
     backend = _require_backend()
     if not hasattr(backend, "rate_limit"):
         return f"Backend {_SYSTEM} não tem suporte a rate limiting ainda."
@@ -117,6 +147,9 @@ def rate_limit_ip(ip: str, reason: str = "", connections_per_second: int = 10) -
 def unrate_limit_ip(ip: str) -> str:
     """Remove o rate limiting de um IP (não é desbloqueio — só remove o throttle)."""
     ip = _validate_ip(ip)
+    dry = _dry_run_if_not_real("remoção de rate limit", ip)
+    if dry is not None:
+        return dry
     backend = _require_backend()
     if not hasattr(backend, "unrate_limit"):
         return f"Backend {_SYSTEM} não tem suporte a rate limiting."
@@ -147,6 +180,9 @@ def block_cidr(cidr: str, reason: str = "") -> str:
         cidr = _validate_cidr(cidr)
     except ValueError as exc:
         return f"CIDR inválido: {exc}"
+    dry = _dry_run_if_not_real("bloqueio de CIDR", cidr)
+    if dry is not None:
+        return dry
     backend = _require_backend()
     if not hasattr(backend, "block_cidr"):
         return f"Backend {_SYSTEM} não tem suporte a block_cidr."
@@ -166,6 +202,9 @@ def unblock_cidr(cidr: str) -> str:
         cidr = _validate_cidr(cidr)
     except ValueError as exc:
         return f"CIDR inválido: {exc}"
+    dry = _dry_run_if_not_real("desbloqueio de CIDR", cidr)
+    if dry is not None:
+        return dry
     backend = _require_backend()
     if not hasattr(backend, "unblock_cidr"):
         return f"Backend {_SYSTEM} não tem suporte a unblock_cidr."

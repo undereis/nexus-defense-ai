@@ -14,6 +14,7 @@ tools/notify.py e tools/mikrotik.py.
 import requests
 
 from config import ABUSEIPDB_API_KEY, SHODAN_API_KEY, VIRUSTOTAL_API_KEY
+from core import operating_mode
 
 _TIMEOUT_SECONDS = 10
 
@@ -173,6 +174,15 @@ def report_to_abuseipdb(ip: str, categories: list[int], comment: str) -> str:
     visível no perfil daquele IP no site do AbuseIPDB."""
     if not ABUSEIPDB_API_KEY:
         return "AbuseIPDB não configurado (defina ABUSEIPDB_API_KEY no .env) — report não enviado."
+    # CINTO DE MODO (Fase 1B): em lab/replay (ou modo indeterminado) NÃO faz a
+    # chamada externa real — reportar contamina a reputação GLOBAL do IP. Defesa
+    # em profundidade; conservador na dúvida. NÃO substitui o Control Plane.
+    _mode = operating_mode.current_mode_safe()
+    if _mode != "real":
+        return (
+            f"[dry-run] Report de {ip} ao AbuseIPDB NÃO enviado — modo operacional "
+            f"'{_mode}' não faz chamada externa real (cinto de modo)."
+        )
     try:
         resp = requests.post(
             "https://api.abuseipdb.com/api/v2/report",
