@@ -838,7 +838,17 @@ def plant_decoy_file(kind: str, directory: str) -> str:
     "telefona pra casa", é comprometimento confirmado (ameaça interna ou
     exfiltração). Exige CANARY_BASE_URL configurado e o listener rodando
     (start_canary_listener)."""
-    return honeytokens.plant_decoy_file(kind, directory)
+    # Roteado pelo Control Plane (CP-SD Fase 4A): política + RBAC + modo
+    # operacional + auditoria antes da escrita real em disco.
+    from core import control_plane as cp
+
+    def _do(kind: str, directory: str) -> str:
+        return honeytokens.plant_decoy_file(kind, directory)
+
+    req = cp.make_request(
+        "plant_decoy_file", target=directory, params={"kind": kind, "directory": directory}
+    )
+    return cp.request_action(req, executor=_do, tool_name="cp_plant_decoy_file").output
 
 
 @tool
@@ -938,7 +948,18 @@ def deploy_decoy_host(profile: str, ip: str = "") -> str:
     SEGURANÇA: recusa qualquer IP que seja infraestrutura própria/crítica ou
     fora de honeynet — a Nexus nunca finge ser um host real. Defensivo, dentro
     do próprio perímetro; não mexe em rede/firewall."""
-    return deception.deploy_decoy_host(profile, ip=ip or None)
+    # Roteado pelo Control Plane (CP-SD Fase 4A): política + RBAC + modo
+    # operacional + auditoria antes de registrar o decoy real. A trava própria
+    # _is_safe_decoy_ip (infra/honeynet) continua valendo dentro do executor.
+    from core import control_plane as cp
+
+    def _do(profile: str, ip: str) -> str:
+        return deception.deploy_decoy_host(profile, ip=ip or None)
+
+    req = cp.make_request(
+        "deploy_decoy_host", target=ip, params={"profile": profile, "ip": ip}
+    )
+    return cp.request_action(req, executor=_do, tool_name="cp_deploy_decoy_host").output
 
 
 @tool
