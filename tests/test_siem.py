@@ -64,8 +64,13 @@ def test_webhook_forwards_and_advances(monkeypatch):
     assert cap["url"] == "https://siem.x/in"
     assert len(cap["json"]["events"]) == 3
     assert cap["headers"]["Authorization"] == "Bearer tok"
-    # cursor avançou -> segunda chamada não tem nada novo
-    assert "nada novo" in siem.forward_new_events()
+    # CP-SD Fase 6H: o disparo em si agora passa por cp.request_action, que
+    # audita a decisão (control_plane_decision + control_plane_executed) na
+    # MESMA tabela `events` que o SIEM varre — por isso a 2ª chamada não
+    # encontra "nada novo", encontra os 2 registros de auditoria do próprio
+    # disparo anterior. Comportamento novo e documentado, não um bug.
+    second = siem.forward_new_events()
+    assert "2 evento(s) enviados" in second
 
 
 def test_elastic_bulk_format(monkeypatch):
@@ -138,10 +143,14 @@ def test_incremental_only_new(monkeypatch):
         return _Resp(200, {"ok": True})
 
     monkeypatch.setattr(siem.requests, "post", fake_post)
-    siem.forward_new_events()                 # envia os 2
+    siem.forward_new_events()                 # envia os 2 iniciais
     db_module.log_event("evt", "10.0.0.9", "novo")
-    siem.forward_new_events()                 # envia só o novo (1)
-    assert sent == [2, 1]
+    # CP-SD Fase 6H: a 1ª chamada acima já gerou 2 eventos de auditoria do
+    # próprio Control Plane (control_plane_decision + control_plane_executed)
+    # na mesma tabela `events` — a 2ª chamada envia o evento manual "novo"
+    # MAIS esses 2, não só o manual isolado.
+    siem.forward_new_events()
+    assert sent == [2, 3]
 
 
 def test_describe_status(monkeypatch):

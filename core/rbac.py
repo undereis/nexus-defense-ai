@@ -78,11 +78,17 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # disparo do ciclo (quem/quando/modo/dry_run), não a mutação (já coberta
     # acima). Ainda SEM "noc.billing" — o action_type antigo (HIGH) continua
     # fora de uso pelo job automático, de propósito (forçaria aprovação).
+    # CP-SD Fase 6H acrescenta "siem.forward_events" — o envio real de
+    # eventos ao SIEM externo (tools/siem.py:forward_new_events). Permissão
+    # ESPECÍFICA, sem wildcard "siem.*"; nenhum papel humano ganhou acesso
+    # SIEM nesta fase (nem "auditor", que tem "audit" — string distinta, sem
+    # correspondência por prefixo/wildcard).
     "service": {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
         "noc.block_subscriber", "noc.unblock_subscriber",
         "billing.run_cycle.trigger",
+        "siem.forward_events",
     },
 }
 

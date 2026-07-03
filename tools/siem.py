@@ -12,13 +12,22 @@ Off por padrão (SIEM_MODE=off). Nunca levanta exceção nem trava o fluxo: falh
 de rede/recusa do destino → cursor NÃO avança (reenvia no próximo ciclo). Não
 loga evento de sucesso — isso criaria um loop de realimentação (cada envio
 geraria um novo evento a enviar). Read-only sobre eventos já gravados.
+
+CP-SD Fase 6H: o envio real (sender + avanço de cursor) passa por
+`cp.request_action` (action_type "siem.forward_events", changes_state=True) —
+RBAC nega sem tocar rede; lab/replay vira DRY_RUN_ONLY (nunca chama
+requests.post). `is_enabled()`/modo inválido/"nada novo para enviar"
+continuam resolvidos ANTES do Control Plane (não criam ActionRequest à toa).
 """
 
 import json
+from contextlib import nullcontext
 
 import requests
 
 from config import SIEM_BATCH, SIEM_INDEX, SIEM_MODE, SIEM_TOKEN, SIEM_URL
+from core import control_plane as cp
+from core import rbac
 from database.db import (
     get_events_after_id,
     get_siem_cursor,
@@ -31,6 +40,21 @@ _TIMEOUT = 15
 
 def is_enabled() -> bool:
     return SIEM_MODE != "off" and bool(SIEM_URL)
+
+
+def _siem_principal_context():
+    """Identidade a usar na chamada ao Control Plane do envio real.
+
+    NUNCA sobrescreve um Principal real já propagado no contexto (chat/API/
+    Slack/Telegram) — só assume SERVICE_SIEM_PRINCIPAL quando NINGUÉM setou
+    Principal (caso do `siem_loop` automático, que não tem identidade
+    própria). Mesma lição da CP-SD Fase 6D (tools/billing.py): sobrescrever
+    incondicionalmente seria elevação de privilégio — um chamador sem
+    `siem.forward_events` (ex.: readonly via chat, através da tool do agente
+    `siem_forward_now`) poderia "virar" service:siem só por invocar a tool."""
+    if cp.get_current_principal() is not None:
+        return nullcontext()
+    return cp.principal_context(rbac.SERVICE_SIEM_PRINCIPAL)
 
 
 def _event_to_doc(row) -> dict:
@@ -89,7 +113,12 @@ _SENDERS = {"elastic": _post_elastic, "splunk": _post_splunk, "webhook": _post_w
 
 def forward_new_events() -> str:
     """Envia os eventos ainda não encaminhados ao SIEM e avança o cursor só se
-    o destino confirmou. Retorna um resumo (nunca levanta)."""
+    o destino confirmou. Retorna um resumo (nunca levanta).
+
+    CP-SD Fase 6H: o envio real (sender + avanço de cursor) passa pelo
+    Control Plane — RBAC nega sem tocar rede; lab/replay vira DRY_RUN_ONLY
+    (nunca chama requests.post). ALLOW executa e só avança o cursor se o
+    destino confirmar, exatamente como antes."""
     if not is_enabled():
         return "SIEM desligado (SIEM_MODE=off ou SIEM_URL vazio)."
     sender = _SENDERS.get(SIEM_MODE)
@@ -102,18 +131,43 @@ def forward_new_events() -> str:
         return "SIEM: nada novo para enviar."
 
     docs = [_event_to_doc(r) for r in rows]
-    try:
-        ok = sender(docs)
-    except (requests.RequestException, ValueError) as exc:
-        log_event("siem_forward_error", None, f"mode={SIEM_MODE} error={exc!r}", action_taken="falhou")
-        return f"SIEM: falha ao enviar ({exc}). Cursor mantido; tenta de novo no próximo ciclo."
-    if not ok:
-        log_event("siem_forward_error", None, f"mode={SIEM_MODE} destino recusou", action_taken="falhou")
-        return "SIEM: o destino recusou o lote. Cursor mantido."
+    candidate_cursor = rows[-1][0]
 
-    new_cursor = rows[-1][0]
-    set_siem_cursor(new_cursor)
-    return f"SIEM: {len(docs)} evento(s) enviados ({SIEM_MODE}); cursor em {new_cursor}."
+    def _do_send(mode: str, batch_size: int, last_cursor, new_cursor, destination_type: str) -> str:
+        try:
+            ok = sender(docs)
+        except (requests.RequestException, ValueError) as exc:
+            log_event("siem_forward_error", None, f"mode={SIEM_MODE} error={exc!r}", action_taken="falhou")
+            return f"SIEM: falha ao enviar ({exc}). Cursor mantido; tenta de novo no próximo ciclo."
+        if not ok:
+            log_event("siem_forward_error", None, f"mode={SIEM_MODE} destino recusou", action_taken="falhou")
+            return "SIEM: o destino recusou o lote. Cursor mantido."
+        set_siem_cursor(new_cursor)
+        return f"SIEM: {len(docs)} evento(s) enviados ({SIEM_MODE}); cursor em {new_cursor}."
+
+    with _siem_principal_context():
+        req = cp.make_request(
+            "siem.forward_events", target="siem",
+            params={
+                "mode": SIEM_MODE,
+                "batch_size": len(docs),
+                "last_cursor": last,
+                "new_cursor": candidate_cursor,
+                "destination_type": SIEM_MODE,
+            },
+        )
+        res = cp.request_action(req, executor=_do_send, tool_name="cp_siem_forward_events")
+
+    if res.status is cp.ActionStatus.DENIED:
+        return f"SIEM: envio NEGADO pela governança: {res.output}"
+
+    if res.status is cp.ActionStatus.DRY_RUN:
+        return f"SIEM: [DRY-RUN] envio não realizado ({res.output})"
+
+    if res.status is cp.ActionStatus.FAILED:
+        return f"SIEM: falha inesperada ao processar o envio: {res.output}"
+
+    return res.output
 
 
 def describe_status() -> str:
