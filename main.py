@@ -38,6 +38,7 @@ from config import (
     THREAT_FEED_REFRESH_INTERVAL_HOURS,
     WATCHDOG_INTERVAL,
 )
+from core import rbac
 from database.db import (
     get_findings_for_host,
     init_db,
@@ -242,7 +243,8 @@ def reconcile_loop(stop_event: threading.Event):
                 ask_agent(
                     "ALERTA: detectei e corrigi divergência entre o que eu achava que estava "
                     f"bloqueado e o estado real do firewall.\n\n{description}\n\n"
-                    "Resuma o que aconteceu e por que isso é importante."
+                    "Resuma o que aconteceu e por que isso é importante.",
+                    principal=rbac.SERVICE_RECONCILE_PRINCIPAL,
                 )
         except Exception as exc:
             log_event("reconcile_error", None, str(exc))
