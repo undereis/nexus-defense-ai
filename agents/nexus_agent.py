@@ -1250,19 +1250,54 @@ def configure_network_device(
     configuração real (ex: 'interface ...', 'no shutdown', 'useradd',
     'systemctl restart ...') e ALTO RISCO: não executa, fica pendente até
     {CREATOR_NAME} confirmar com o código enviado fora desta conversa."""
+    # Roteado pelo Control Plane (CP-SD Fase 4B): antes, o ramo de escrita ia
+    # direto a risk_gate.request_confirmation SEM RBAC/modo/auditoria — o
+    # tool_name "network_device_run_command" nunca esteve mapeado no overlay de
+    # tools/risk.py (fora de escopo tocar esse arquivo nesta fase). Leitura e
+    # escrita agora passam por cp.request_action; a escrita é HIGH risco +
+    # aprovação, que o próprio request_action delega ao MESMO gate de
+    # confirmação fora de banda de sempre (via _skip_policy=True) — sem
+    # duplicar arquitetura.
+    #
+    # Microcorreção de segurança: `command` cru pode conter password/secret/
+    # community/authorization (sintaxe de config de rede é espaço-separada, ex.
+    # "username admin password X" ou "snmp-server community Y"). O `command`
+    # cru só é usado DENTRO do executor (_do_write), depois de ALLOW — nunca no
+    # summary da confirmação fora de banda (stdout/webhook/Slack/Telegram), que
+    # usa a versão redigida por `core.redaction.redact`. A auditoria da hash
+    # chain (via `_audit`/`redact_kwargs` em core/control_plane.py, não
+    # alterado) já aplica o mesmo `redact` a cada valor string dos params —
+    # os padrões de redaction foram reforçados (ver core/redaction.py) para
+    # cobrir "chave valor" espaço-separado, não só "chave=valor"/"chave: valor".
+    from core import control_plane as cp
+    from core import redaction
     from tools import network_devices
 
     if vendor not in network_devices.VENDORS:
         return f"Vendor desconhecido: {vendor!r}. Suportados: {', '.join(network_devices.VENDORS)}."
 
     if network_devices.is_safe_read(vendor, command):
-        return network_devices.run_read_command(vendor, host, command, user, port)
+        def _do_read(vendor, host, command, user, port):
+            return network_devices.run_read_command(vendor, host, command, user, port)
 
-    summary = f"Comando de configuração em {vendor} ({host}): {command}"
-    return risk_gate.request_confirmation(
-        "network_device_run_command", summary, kb_query=f"{vendor} {command}",
-        host=host, command=command, user=user, port=port,
+        req = cp.make_request(
+            "network_device_read_command", target=host,
+            params={"vendor": vendor, "host": host, "command": command, "user": user, "port": port},
+        )
+        return cp.request_action(req, executor=_do_read, tool_name="cp_network_device_read_command").output
+
+    def _do_write(host, command, user, port):
+        return network_devices._raw_ssh(host, command, user, port)
+
+    req = cp.make_request(
+        "network_device_write_command", target=host,
+        params={"host": host, "command": command, "user": user, "port": port},
     )
+    return cp.request_action(
+        req, executor=_do_write, tool_name="network_device_run_command",
+        kb_query=f"{vendor} {command}",
+        summary=f"Comando de configuração em {vendor} ({host}): {redaction.redact(command)}",
+    ).output
 
 
 @tool
@@ -1982,14 +2017,28 @@ def get_operating_mode() -> str:
 def set_operating_mode(mode: str) -> str:
     """Define o MODO OPERACIONAL do backend: real|lab|replay. CUIDADO: 'real' permite ações
     reais; 'lab'/'replay' forçam dry-run em ações que alteram estado. É auditado."""
-    from core import operating_mode
-    from database.db import log_event
-    try:
+    # Roteado pelo Control Plane (CP-SD Fase 4B): antes, QUALQUER papel (via
+    # /chat ou Telegram/Slack readonly) conseguia trocar o modo sem checagem de
+    # RBAC alguma — só era auditado depois do fato. Reaproveita a MESMA
+    # permissão "system.operating_mode" já usada pela REST (POST /api/mode).
+    # changes_state=False é deliberado (ver core/policy_engine.py) — a proteção
+    # aqui é o RBAC, não o cinto de lab/replay.
+    from core import control_plane as cp
+
+    def _do(mode: str) -> str:
+        from core import operating_mode
+        from database.db import log_event
+
+        old = operating_mode.current_mode_safe()
         m = operating_mode.set_operating_mode(mode)
-    except ValueError as exc:
-        return str(exc)
-    log_event("operating_mode_changed", None, f"mode={m}", action_taken="alterado pelo operador")
-    return f"Modo operacional do backend definido para '{m}'."
+        log_event(
+            "operating_mode_changed", None, f"old={old} new={m}",
+            action_taken="alterado pelo operador",
+        )
+        return f"Modo operacional do backend definido para '{m}' (era '{old}')."
+
+    req = cp.make_request("set_operating_mode", params={"mode": mode})
+    return cp.request_action(req, executor=_do, tool_name="cp_set_operating_mode").output
 
 
 @tool

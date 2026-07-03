@@ -69,6 +69,19 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     "device_check": ActionSpec("noc.device_check", False, ActionRisk.LOW),
     # investigação (read-only / allowlist)
     "ssh_command": ActionSpec("investigate.ssh", False, ActionRisk.MEDIUM),
+    # CP-SD Fase 4B — configure_network_device: leitura reaproveita a mesma
+    # permissão de ssh_command (mesma categoria de investigação SSH); escrita é
+    # ação de infra de alto impacto (HIGH + aprovação humana), igual mikrotik_write.
+    "network_device_read_command": ActionSpec("investigate.ssh", False, ActionRisk.MEDIUM),
+    "network_device_write_command": ActionSpec(
+        "infra.network_device_write", True, ActionRisk.HIGH, requires_approval=True
+    ),
+    # CP-SD Fase 4B — set_operating_mode: reaproveita a MESMA permissão já usada
+    # pela REST (api/server.py POST /api/mode -> require_permission("system.operating_mode")).
+    # changes_state=False DELIBERADO: é ação META que opera SOBRE o modo — se
+    # fosse True, o cinto de lab/replay (passo 6) travaria a própria saída de
+    # lab/replay de volta para real (galinha-e-ovo). A proteção real é o RBAC.
+    "set_operating_mode": ActionSpec("system.operating_mode", False, ActionRisk.MEDIUM),
     # infraestrutura de alto impacto — toggle + aprovação
     "mikrotik_write": ActionSpec("infra.mikrotik_write", True, ActionRisk.HIGH, requires_approval=True),
     "asn_block": ActionSpec("infra.asn_block", True, ActionRisk.CRITICAL, "ALLOW_ASN_BLOCK", True),

@@ -141,6 +141,7 @@ def request_action(
     dry_run_executor=None,
     approval_ttl_minutes: int = 10,
     kb_query: str = "",
+    summary: str | None = None,
 ) -> ActionResult:
     """Avalia, audita e — só se permitido — executa.
 
@@ -148,6 +149,10 @@ def request_action(
     - dry_run_executor(**params) : preview read-only (caminho DRY_RUN_ONLY).
     - tool_name                  : nome sob o qual o executor é registrado no
                                    gate de aprovação (default = action_type).
+    - summary                    : texto mostrado no gate de confirmação fora de
+                                   banda (REQUIRE_APPROVAL); default None usa o
+                                   resumo genérico `_summary` (action_type/alvo/
+                                   risco/papel) — igual ao comportamento de antes.
     """
     dec = evaluate(req)
     params = dict(req.params)
@@ -179,7 +184,7 @@ def request_action(
             )
         risk_gate.register_action(name, executor)
         text = risk_gate.request_confirmation(
-            name, _summary(req, dec), ttl_minutes=approval_ttl_minutes, kb_query=kb_query,
+            name, summary or _summary(req, dec), ttl_minutes=approval_ttl_minutes, kb_query=kb_query,
             _skip_policy=True, **params
         )
         return ActionResult(ActionStatus.AWAITING_APPROVAL, dec, output=text)
