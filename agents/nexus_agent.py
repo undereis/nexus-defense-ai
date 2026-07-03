@@ -260,9 +260,19 @@ def report_ip_to_abuseipdb(ip: str, reason: str) -> str:
     Normalmente isso já acontece automaticamente quando isolate_ip
     confirma um isolamento — use esta tool só se quiser reportar algo
     que não passou pelo isolamento automático."""
-    categories = threat_feeds.categorize_isolation_reason(reason)
-    comment = f"Reportado manualmente via Nexus Defense AI (Xfiber). Motivo: {reason}."
-    return threat_feeds.report_to_abuseipdb(ip, categories, comment)
+    # Roteado pelo Control Plane (Fase 3): política + RBAC + modo operacional +
+    # auditoria antes do report externo real. Em real+admin, comportamento igual
+    # ao de antes; o cinto de modo (Fase 1B) dentro de threat_feeds continua
+    # valendo como segunda camada.
+    from core import control_plane as cp
+
+    def _do(ip: str, reason: str) -> str:
+        categories = threat_feeds.categorize_isolation_reason(reason)
+        comment = f"Reportado manualmente via Nexus Defense AI (Xfiber). Motivo: {reason}."
+        return threat_feeds.report_to_abuseipdb(ip, categories, comment)
+
+    req = cp.make_request("report_ip_to_abuseipdb", target=ip, params={"ip": ip, "reason": reason})
+    return cp.request_action(req, executor=_do, tool_name="cp_report_ip_to_abuseipdb").output
 
 
 @tool
@@ -512,7 +522,15 @@ def list_knowledge_topics() -> str:
 @tool
 def release_ip(ip: str) -> str:
     """Remove o bloqueio de um IP previamente isolado, restaurando a comunicação."""
-    return firewall.unblock_ip(ip)
+    # Roteado pelo Control Plane (Fase 3): reaproveita o action_type "unblock_ip"
+    # já existente no catálogo (antes órfão — nenhuma tool o usava).
+    from core import control_plane as cp
+
+    def _do(ip: str) -> str:
+        return firewall.unblock_ip(ip)
+
+    req = cp.make_request("unblock_ip", target=ip, params={"ip": ip})
+    return cp.request_action(req, executor=_do, tool_name="cp_release_ip").output
 
 
 @tool
@@ -1336,7 +1354,15 @@ def throttle_ip(ip: str, reason: str = "") -> str:
     resposta (throttle). Usa pfctl (max-src-conn-rate com auto-promoção
     para blocklist se exceder) no macOS, hashlimit no Linux. Reversível:
     use release_ip_throttle para remover."""
-    return firewall.rate_limit_ip(ip, reason)
+    # Roteado pelo Control Plane (Fase 3): política + RBAC + modo operacional +
+    # auditoria antes do rate limit real.
+    from core import control_plane as cp
+
+    def _do(ip: str, reason: str) -> str:
+        return firewall.rate_limit_ip(ip, reason)
+
+    req = cp.make_request("rate_limit_ip", target=ip, params={"ip": ip, "reason": reason})
+    return cp.request_action(req, executor=_do, tool_name="cp_throttle_ip").output
 
 
 @tool
@@ -1344,7 +1370,14 @@ def release_ip_throttle(ip: str) -> str:
     """Remove o rate limiting de um IP (não é desbloqueio completo — só
     remove o throttle aplicado por throttle_ip ou pelo playbook nível 1).
     Para desbloquear completamente, use release_ip."""
-    return firewall.unrate_limit_ip(ip)
+    # Roteado pelo Control Plane (Fase 3): mesma governança do throttle_ip.
+    from core import control_plane as cp
+
+    def _do(ip: str) -> str:
+        return firewall.unrate_limit_ip(ip)
+
+    req = cp.make_request("unrate_limit_ip", target=ip, params={"ip": ip})
+    return cp.request_action(req, executor=_do, tool_name="cp_release_ip_throttle").output
 
 
 @tool

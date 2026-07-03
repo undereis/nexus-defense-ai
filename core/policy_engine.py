@@ -49,6 +49,12 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     "block_ip": ActionSpec("defense.block_ip", True, ActionRisk.MEDIUM),
     "unblock_ip": ActionSpec("defense.unblock_ip", True, ActionRisk.MEDIUM),
     "isolate_ip": ActionSpec("defense.block_ip", True, ActionRisk.MEDIUM),
+    # throttle (Fase 3 — release_ip/throttle_ip/release_ip_throttle migrados
+    # para o Control Plane; release_ip reaproveita "unblock_ip" acima).
+    "rate_limit_ip": ActionSpec("defense.rate_limit_ip", True, ActionRisk.MEDIUM),
+    "unrate_limit_ip": ActionSpec("defense.unrate_limit_ip", True, ActionRisk.MEDIUM),
+    # reputação externa (Fase 3 — report_ip_to_abuseipdb migrado)
+    "report_ip_to_abuseipdb": ActionSpec("reputation.report_ip", True, ActionRisk.MEDIUM),
     "honeypot_start": ActionSpec("defense.honeypot", True, ActionRisk.MEDIUM),
     "honeypot_stop": ActionSpec("defense.honeypot", True, ActionRisk.MEDIUM),
     # operação NOC
