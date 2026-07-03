@@ -22,12 +22,15 @@ Salvaguardas (mesma filosofia do _AUTO_CAP do playbook):
 """
 
 import ipaddress
+from contextlib import nullcontext
 
 from config import (
     BILLING_SOURCE,
     SUBSCRIBER_BLOCK_DAYS,
     SUBSCRIBER_BLOCK_MAX_BATCH,
 )
+from core import control_plane as cp
+from core import rbac
 from database.db import (
     get_subscriber,
     list_delinquent_subscribers,
@@ -61,6 +64,22 @@ def _is_safe_to_block(ip: str) -> bool:
 
 def _is_mikrotik_failure(result: str) -> bool:
     return any(marker in result for marker in _MIKROTIK_FAILURE_MARKERS)
+
+
+def _billing_principal_context():
+    """Identidade a usar na chamada ao Control Plane dentro de block/unblock.
+
+    NUNCA sobrescreve um Principal real já propagado no contexto (chat/API/
+    Slack/Telegram, ou qualquer chamada que já esteja dentro de um
+    `principal_context` de identidade humana/autenticada) — só assume
+    SERVICE_BILLING_PRINCIPAL quando NINGUÉM setou Principal (caso do
+    `subscriber_billing_loop` automático, que não tem identidade própria).
+    Sobrescrever incondicionalmente seria elevação de privilégio: um
+    chamador sem noc.block_subscriber/noc.unblock_subscriber (ex.: readonly
+    via chat) poderia "virar" service:billing só por invocar a tool."""
+    if cp.get_current_principal() is not None:
+        return nullcontext()
+    return cp.principal_context(rbac.SERVICE_BILLING_PRINCIPAL)
 
 
 # ---------- adaptador de fonte de cobrança ----------
@@ -121,7 +140,13 @@ def get_billing_source() -> BillingSource:
 
 def block_subscriber(sub: dict, reason: str = "") -> tuple[bool, str]:
     """Bloqueia um assinante no MikroTik e atualiza estado + auditoria.
-    Retorna (sucesso, detalhe). Recusa IP de infra sem tocar no firewall."""
+    Retorna (sucesso, detalhe). Recusa IP de infra sem tocar no firewall.
+
+    CP-SD Fase 6D: a chamada real ao Mikrotik passa pelo Control Plane
+    (action_type "block_subscriber", já existente no catálogo) — RBAC e o
+    cinto de modo (lab/replay -> DRY_RUN_ONLY, nunca toca o Mikrotik) valem
+    ANTES do executor. `_is_safe_to_block` continua rodando primeiro e sem
+    depender do CP (trava de infra própria, não delegável)."""
     sid = sub["subscriber_id"]
     ip = sub["ip_address"]
     reason = reason or f"{sub.get('days_overdue', '?')} dias de atraso"
@@ -131,8 +156,26 @@ def block_subscriber(sub: dict, reason: str = "") -> tuple[bool, str]:
         log_event("subscriber_block_refused", ip, f"sid={sid} motivo=infra_protegida", action_taken="recusado")
         return False, f"RECUSADO {sid} ({ip}): IP de infraestrutura/loopback nunca é bloqueado."
 
-    result = mikrotik.block_subscriber_ip(ip)
-    if _is_mikrotik_failure(result):
+    def _execute_block(subscriber_id: str, ip: str, reason: str) -> str:
+        return mikrotik.block_subscriber_ip(ip)
+
+    with _billing_principal_context():
+        req = cp.make_request(
+            "block_subscriber", target=ip,
+            params={"subscriber_id": sid, "ip": ip, "reason": reason},
+        )
+        res = cp.request_action(req, executor=_execute_block, tool_name="cp_block_subscriber")
+
+    if res.status is cp.ActionStatus.DENIED:
+        record_subscriber_action(sid, "bloqueio_negado_cp", res.output)
+        return False, f"NEGADO {sid} ({ip}) pela governança: {res.output}"
+
+    if res.status is cp.ActionStatus.DRY_RUN:
+        record_subscriber_action(sid, "bloqueio_dry_run", res.output)
+        return False, f"[DRY-RUN] {sid} ({ip}): {res.output}"
+
+    result = res.output
+    if res.status is cp.ActionStatus.FAILED or _is_mikrotik_failure(result):
         record_subscriber_action(sid, "bloqueio_falhou", result)
         log_event("subscriber_block_failed", ip, f"sid={sid} {result}", action_taken="falhou")
         return False, f"FALHA {sid} ({ip}): {result}"
@@ -143,12 +186,34 @@ def block_subscriber(sub: dict, reason: str = "") -> tuple[bool, str]:
 
 
 def unblock_subscriber(sub: dict, reason: str = "pagamento confirmado") -> tuple[bool, str]:
-    """Desbloqueia um assinante no MikroTik e reativa o estado + auditoria."""
+    """Desbloqueia um assinante no MikroTik e reativa o estado + auditoria.
+
+    CP-SD Fase 6D: mesmo padrão de `block_subscriber` — a chamada real ao
+    Mikrotik passa pelo Control Plane (action_type "unblock_subscriber",
+    já existente no catálogo) antes de tocar o firewall."""
     sid = sub["subscriber_id"]
     ip = sub["ip_address"]
 
-    result = mikrotik.unblock_subscriber_ip(ip)
-    if _is_mikrotik_failure(result):
+    def _execute_unblock(subscriber_id: str, ip: str, reason: str) -> str:
+        return mikrotik.unblock_subscriber_ip(ip)
+
+    with _billing_principal_context():
+        req = cp.make_request(
+            "unblock_subscriber", target=ip,
+            params={"subscriber_id": sid, "ip": ip, "reason": reason},
+        )
+        res = cp.request_action(req, executor=_execute_unblock, tool_name="cp_unblock_subscriber")
+
+    if res.status is cp.ActionStatus.DENIED:
+        record_subscriber_action(sid, "desbloqueio_negado_cp", res.output)
+        return False, f"NEGADO {sid} ({ip}) pela governança: {res.output}"
+
+    if res.status is cp.ActionStatus.DRY_RUN:
+        record_subscriber_action(sid, "desbloqueio_dry_run", res.output)
+        return False, f"[DRY-RUN] {sid} ({ip}): {res.output}"
+
+    result = res.output
+    if res.status is cp.ActionStatus.FAILED or _is_mikrotik_failure(result):
         record_subscriber_action(sid, "desbloqueio_falhou", result)
         log_event("subscriber_unblock_failed", ip, f"sid={sid} {result}", action_taken="falhou")
         return False, f"FALHA {sid} ({ip}): {result}"

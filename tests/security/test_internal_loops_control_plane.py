@@ -349,11 +349,15 @@ def test_service_role_still_has_no_wildcard_and_is_not_admin():
 
 def test_service_role_gained_only_the_four_expected_permissions():
     """As permissões humanas (readonly/auditor/soc_analyst/noc_operator) não
-    devem ter sido alteradas por esta fase."""
-    assert rbac.ROLE_PERMISSIONS["service"] == {
+    devem ter sido alteradas por esta fase. A checagem do papel "service" é
+    por SUBCONJUNTO (não "=="): CP-SD Fase 6D (posterior a esta) acrescentou
+    mais 2 permissões (noc.block_subscriber/noc.unblock_subscriber) — o
+    conjunto EXATO e atualizado vive em
+    test_billing_control_plane.py::test_service_role_full_permission_set_after_phase_6d."""
+    assert {
         "read", "risk.sweep_expired", "audit.checkpoint",
         "watchdog.check_health", "report.generate",
-    }
+    }.issubset(rbac.ROLE_PERMISSIONS["service"])
     assert rbac.ROLE_PERMISSIONS["readonly"] == {"read"}
     assert rbac.ROLE_PERMISSIONS["auditor"] == {"read", "audit"}
     assert rbac.ROLE_PERMISSIONS["soc_analyst"] == {"read", "audit", "defense.*", "investigate.*"}
