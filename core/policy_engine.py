@@ -116,6 +116,16 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     # automático diário. Reaproveita o action_type "run_billing_cycle" (HIGH)
     # DELIBERADAMENTE NÃO acontece aqui — HIGH forçaria REQUIRE_APPROVAL sempre.
     "billing.run_cycle.trigger": ActionSpec("billing.run_cycle.trigger", False, ActionRisk.LOW),
+    # CP-SD Fase 6H — envio real de eventos ao SIEM externo (tools/siem.py:
+    # forward_new_events). changes_state=True DELIBERADO (ao contrário do
+    # disparo de billing acima): enviar dados para um destino EXTERNO é um
+    # side effect real fora do Nexus mesmo sem mutar nada aqui dentro — em
+    # lab/replay deve virar DRY_RUN_ONLY (nunca chamar requests.post), já que
+    # tools/siem.py não tem cinto de modo próprio (o CP é a única defesa).
+    # MEDIUM (não HIGH): risco de exfiltração/config errada é real, mas não é
+    # uma ação ofensiva nem infraestrutura crítica própria; MEDIUM não força
+    # aprovação sozinho — não pode travar o loop automático a cada 60s.
+    "siem.forward_events": ActionSpec("siem.forward_events", True, ActionRisk.MEDIUM),
 }
 
 # Ação desconhecida: conservadora, mas compatível (não exige permissão própria).

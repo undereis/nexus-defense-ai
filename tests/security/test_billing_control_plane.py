@@ -670,9 +670,13 @@ def test_human_roles_unchanged_after_phase_6d():
 
 
 def test_service_role_full_permission_set_after_phase_6d():
-    assert rbac.ROLE_PERMISSIONS["service"] == {
+    """Checagem por SUBCONJUNTO (não "=="): CP-SD Fase 6H (posterior a esta)
+    acrescentou mais 1 permissão ("siem.forward_events") — o conjunto EXATO
+    e atualizado vive em
+    test_siem_control_plane.py::test_service_role_full_permission_set_after_phase_6h."""
+    assert {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
         "noc.block_subscriber", "noc.unblock_subscriber",
         "billing.run_cycle.trigger",
-    }
+    }.issubset(rbac.ROLE_PERMISSIONS["service"])
