@@ -96,6 +96,17 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
         "social.generate", False, ActionRisk.HIGH, "ALLOW_SOCIAL_ENGINEERING",
         needs_engagement_ref=True,
     ),
+    # CP-SD Fase 6B — loops internos simples de main.py (housekeeping, sem
+    # Mikrotik/billing/DNS/rede externa crítica) migrados ao Control Plane.
+    # action_type == permissão (string nova e específica, não wildcard) —
+    # só o papel "service" recebe cada uma (ver core/rbac.py).
+    "risk.sweep_expired": ActionSpec("risk.sweep_expired", True, ActionRisk.LOW),
+    "audit.checkpoint": ActionSpec("audit.checkpoint", True, ActionRisk.MEDIUM),
+    "watchdog.check_health": ActionSpec("watchdog.check_health", True, ActionRisk.MEDIUM),
+    # changes_state=False DELIBERADO: generate_summary_report só LÊ eventos e
+    # devolve texto — o notify/log_event do resumo continuam fora do executor,
+    # em main.py, como já era. Sem mutação real a gatear pelo cinto de modo.
+    "report.generate": ActionSpec("report.generate", False, ActionRisk.MEDIUM),
 }
 
 # Ação desconhecida: conservadora, mas compatível (não exige permissão própria).
