@@ -6,10 +6,10 @@ Agora passa `principal=rbac.SERVICE_PROACTIVE_AUDIT_PRINCIPAL` (Fase 5A) —
 mudança de uma linha, sem alterar periodicidade, payload, lógica de auditoria
 proativa ou try/except. Segue o mesmo padrão da Fase 5B (reconcile_loop).
 
-monitor_loop continua fora de escopo (2 chamadas ask_agent sem Principal,
-dívida rastreada); reconcile_loop mantém SERVICE_RECONCILE_PRINCIPAL (Fase
-5B); o loop interativo do CLI continua chamando ask_agent sem principal de
-propósito (Fase 2: só o CLI local pode).
+monitor_loop continuava fora de escopo nesta fase (migrado depois, na Fase
+5D — ver test_monitor_loop_service_principal.py); reconcile_loop mantém
+SERVICE_RECONCILE_PRINCIPAL (Fase 5B); o loop interativo do CLI continua
+chamando ask_agent sem principal de propósito (Fase 2: só o CLI local pode).
 
 Nenhum loop real roda: proactive_audit_loop é chamado uma vez com um
 stop_event cujo `.wait()` já seta o evento (uma iteração só, sem while
@@ -71,18 +71,8 @@ def test_proactive_audit_loop_without_change_does_not_call_ask_agent(monkeypatch
     assert captured == {}
 
 
-# ------------------------- 10/15: monitor_loop fora de escopo, 2 chamadas sem Principal -------------------------
-
-def test_monitor_loop_source_unchanged_no_service_principal():
-    src = inspect.getsource(main_module.monitor_loop)
-    assert "principal=" not in src
-    assert "SERVICE_" not in src
-
-
-def test_monitor_loop_still_has_two_ask_agent_calls_without_principal():
-    src = inspect.getsource(main_module.monitor_loop)
-    assert src.count("ask_agent(") == 2
-
+# monitor_loop foi migrado na Fase 5D — ver test_monitor_loop_service_principal.py
+# para as asserções sobre ele (nesta fase 5C ele ainda tinha 2 chamadas sem Principal).
 
 # ------------------------- 11: reconcile_loop mantém seu Service Principal -------------------------
 
@@ -99,8 +89,10 @@ def test_cli_interactive_ask_agent_call_still_has_no_principal():
     assert "ask_agent(user_text, principal" not in src
 
 
-def test_exactly_two_service_principals_wired_in_main_module():
-    src = inspect.getsource(main_module)
-    assert src.count("principal=rbac.SERVICE_RECONCILE_PRINCIPAL") == 1
+def test_proactive_audit_loop_gained_explicit_principal_in_main_module():
+    """proactive_audit_loop (Fase 5C) tem exatamente uma chamada ask_agent com
+    SERVICE_PROACTIVE_AUDIT_PRINCIPAL. A contagem GLOBAL de `principal=` em
+    main.py é responsabilidade do teste dedicado da fase mais recente — ver
+    test_monitor_loop_service_principal.py (Fase 5D)."""
+    src = inspect.getsource(main_module.proactive_audit_loop)
     assert src.count("principal=rbac.SERVICE_PROACTIVE_AUDIT_PRINCIPAL") == 1
-    assert src.count("principal=") == 2  # só reconcile_loop + proactive_audit_loop
