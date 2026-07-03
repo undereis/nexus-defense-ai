@@ -40,16 +40,25 @@ MASK = "***REDACTED***"
 
 _KV_KEYS = (
     r"token|password|passwd|secret|api[_-]?key|signing[_-]?secret|"
-    r"webhook[_-]?secret|bot[_-]?token|private[_-]?key|passphrase|credential"
+    r"webhook[_-]?secret|bot[_-]?token|private[_-]?key|passphrase|credential|"
+    r"community"
 )
+
+# Separador chave/valor: "="/":" (com espaço opcional dos dois lados) OU só
+# espaço — cobre tanto "key=value"/"key: value" quanto sintaxe de CLI de rede
+# (Cisco/Huawei/RouterOS), que é espaço-separada: "password MinhaSenha123",
+# "snmp-server community public123". CP-SD Fase 4B microcorreção: comando cru
+# de configure_network_device passa por isto antes de auditoria/summary/log.
+_KV_SEP = r"(?:\s*[:=]\s*|\s+)"
 
 # (padrão, substituição) — `re.sub` aceita string (com backrefs) ou callable.
 _PATTERNS: list[tuple[re.Pattern, object]] = [
-    # Authorization: Bearer xxxxx  /  bearer xxxxx
-    (re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-]{6,})"), r"\1 " + MASK),
-    # chave_sensivel = valor  /  chave_sensivel: "valor"
-    (re.compile(rf"(?i)\b({_KV_KEYS})(\s*[:=]\s*)(\"?)([^\s\"',;]+)(\"?)"),
-     lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{MASK}{m.group(5)}"),
+    # Authorization: Bearer xxxxx  /  bearer xxxxx (mínimo curto — não assumir
+    # que um token de teste/lab "pequeno" é seguro só por ser curto).
+    (re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-]{2,})"), r"\1 " + MASK),
+    # chave_sensivel = valor  /  chave_sensivel: valor  /  chave_sensivel valor
+    (re.compile(rf"(?i)\b({_KV_KEYS}){_KV_SEP}(\"?)([^\s\"',;]+)(\"?)"),
+     lambda m: f"{m.group(1)} {m.group(2)}{MASK}{m.group(4)}"),
     # Telegram bot token: 123456789:AAxxxxxxxx...
     (re.compile(r"\b\d{6,12}:[A-Za-z0-9_\-]{30,}"), MASK),
 ]
