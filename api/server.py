@@ -190,7 +190,12 @@ def api_unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio via AP
 @app.post("/api/billing/run")
 def api_run_billing(dry_run: bool = True,
                     principal: Principal = Depends(require_permission("noc.billing"))):
-    return noc_api.run_billing(dry_run)
+    # CP-SD Fase 6F: o Principal já resolvido pelo require_permission acima
+    # (mesmo padrão de api_block_subscriber/api_unblock_subscriber) agora
+    # chega ao disparo do ciclo dentro de tools/billing.py, em vez de ser
+    # descartado — a auditoria do trigger mostra o ator/papel real, não
+    # service:billing.
+    return noc_api.run_billing(dry_run, actor=principal.actor, role=principal.role)
 
 
 @app.post("/api/devices/check")

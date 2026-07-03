@@ -11,6 +11,7 @@ tools/device_monitor (mesma guarda/auditoria do resto do sistema).
 """
 
 from core import control_plane as cp
+from core import rbac
 from database.db import (
     get_events_since,
     list_device_outages,
@@ -85,7 +86,16 @@ def unblock_subscriber(subscriber_id: str, reason: str = "desbloqueio via API",
     return {"message": res.output, "decision": res.decision.decision.value, "status": res.status.value}
 
 
-def run_billing(dry_run: bool = True) -> dict:
+def run_billing(dry_run: bool = True, actor: str = "", role: str = "") -> dict:
+    """CP-SD Fase 6F: se `actor`/`role` vierem preenchidos (o REST já resolve
+    o Principal real via `require_permission("noc.billing")`), propaga essa
+    identidade via ContextVar antes de chamar o ciclo — sem isso,
+    `run_billing_cycle` não teria como saber quem disparou (não aceita
+    actor/role como parâmetro próprio; só lê o Principal ativo). Sem
+    actor/role (chamada direta, testes), comportamento IDÊNTICO a antes."""
+    if actor or role:
+        with cp.principal_context(rbac.Principal(actor, role)):
+            return {"message": billing.run_billing_cycle(dry_run=dry_run)}
     return {"message": billing.run_billing_cycle(dry_run=dry_run)}
 
 

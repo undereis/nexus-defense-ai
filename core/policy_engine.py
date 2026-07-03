@@ -107,6 +107,15 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     # devolve texto — o notify/log_event do resumo continuam fora do executor,
     # em main.py, como já era. Sem mutação real a gatear pelo cinto de modo.
     "report.generate": ActionSpec("report.generate", False, ActionRisk.MEDIUM),
+    # CP-SD Fase 6F — evento de DISPARO do ciclo de cobrança (loop automático/
+    # REST/agente). NÃO é a mutação real — essa já é protegida desde a Fase 6D
+    # por "block_subscriber"/"unblock_subscriber" dentro do próprio ciclo.
+    # changes_state=False DELIBERADO (mesmo padrão de "report.generate"): nunca
+    # vira DRY_RUN_ONLY por modo, e LOW nunca força aprovação — só audita QUEM
+    # disparou o ciclo (actor/role/modo/dry_run), sem poder travar o job
+    # automático diário. Reaproveita o action_type "run_billing_cycle" (HIGH)
+    # DELIBERADAMENTE NÃO acontece aqui — HIGH forçaria REQUIRE_APPROVAL sempre.
+    "billing.run_cycle.trigger": ActionSpec("billing.run_cycle.trigger", False, ActionRisk.LOW),
 }
 
 # Ação desconhecida: conservadora, mas compatível (não exige permissão própria).
