@@ -46,7 +46,18 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # concedida por padrão (fica como admin + toggle + aprovação) — conservador.
     "soc_analyst": {"read", "audit", "defense.*", "investigate.*"},
     # NOC: operação de rede limitada + bloqueio/desbloqueio de IP defensivo.
-    "noc_operator": {"read", "noc.*", "defense.block_ip", "defense.unblock_ip"},
+    # CP-SD Fase 6F: "billing.run_cycle.trigger" adicionado EXPLICITAMENTE (o
+    # wildcard "noc.*" não cobre o namespace "billing." — prefixos distintos).
+    # Necessário para não regredir o uso legítimo de POST /api/billing/run já
+    # existente: esse endpoint já exige require_permission("noc.billing"), que
+    # noc_operator satisfaz via "noc.*"; sem esta permissão nova, a MESMA
+    # chamada passaria no gate da REST mas seria NEGADA no disparo interno
+    # (auditoria do trigger, Fase 6F) — uma regressão, não um endurecimento
+    # deliberado.
+    "noc_operator": {
+        "read", "noc.*", "defense.block_ip", "defense.unblock_ip",
+        "billing.run_cycle.trigger",
+    },
     # Auditor: leitura + verificação/exportação de auditoria.
     "auditor": {"read", "audit"},
     # Read-only: só leitura.
@@ -63,10 +74,15 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # DELIBERADAMENTE sem "noc.billing" (o disparo do ciclo inteiro continua
     # fora do escopo desta fase) e sem o wildcard "noc.*" que "noc_operator"
     # já tem (não estendido ao papel "service").
+    # CP-SD Fase 6F acrescenta "billing.run_cycle.trigger" — só a AUDITORIA do
+    # disparo do ciclo (quem/quando/modo/dry_run), não a mutação (já coberta
+    # acima). Ainda SEM "noc.billing" — o action_type antigo (HIGH) continua
+    # fora de uso pelo job automático, de propósito (forçaria aprovação).
     "service": {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
         "noc.block_subscriber", "noc.unblock_subscriber",
+        "billing.run_cycle.trigger",
     },
 }
 

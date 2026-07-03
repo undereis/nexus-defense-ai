@@ -1,14 +1,18 @@
-"""CP-SD Fase 6D — block_subscriber/unblock_subscriber (tools/billing.py)
-governados pelo Control Plane antes de tocar o Mikrotik real.
+"""CP-SD Fase 6D/6F — billing (tools/billing.py) governado pelo Control Plane.
 
-Escopo desta fase (ver docstring de tools/billing.py:block_subscriber e
-CLAUDE.md): só a MUTAÇÃO REAL do billing (as duas funções que chamam
-mikrotik.block_subscriber_ip/unblock_subscriber_ip) passa a ser gateada por
-`cp.request_action` (RBAC + cinto de modo lab/replay). `run_billing_cycle`
-como EVENTO DE DISPARO, o endpoint REST `/api/billing/run`, o mapeamento em
-`tools/risk.py:_TOOL_ACTION_MAP` e o cinto de modo dentro de
-`tools/mikrotik.py` continuam FORA de escopo (ver relatório da Fase 6C) —
-esta suíte não declara nenhum desses caminhos como resolvido.
+Fase 6D: só a MUTAÇÃO REAL do billing (block_subscriber/unblock_subscriber,
+que chamam mikrotik.block_subscriber_ip/unblock_subscriber_ip) passa a ser
+gateada por `cp.request_action` (RBAC + cinto de modo lab/replay).
+
+Fase 6F: o DISPARO do ciclo (`run_billing_cycle`) passa a gerar um evento
+audit-only no Control Plane (action_type "billing.run_cycle.trigger",
+changes_state=False, LOW, sem aprovação) — registra quem/quando/modo/dry_run
+disparou, SEM travar o job automático diário e SEM substituir o gate das
+mutações internas (que continua sendo block_subscriber/unblock_subscriber).
+O endpoint REST `/api/billing/run` agora preserva o Principal real do token
+até o disparo; `tools/risk.py:_TOOL_ACTION_MAP` e o cinto de modo dentro de
+`tools/mikrotik.py` continuam FORA de escopo — esta suíte não declara nenhum
+desses caminhos como resolvido.
 
 Nenhum Mikrotik/rede real: `billing.mikrotik.block_subscriber_ip`/
 `unblock_subscriber_ip` são sempre mockados por `fake_mikrotik`. DB sempre
@@ -333,7 +337,12 @@ def test_is_safe_to_block_loopback_runs_before_control_plane(fake_mikrotik):
     assert _cp_decision_events() == []
 
 
-# ------------------------- 8: run_billing_cycle(dry_run=True) nunca chama CP/Mikrotik -------------------------
+# ------------------------- 8: run_billing_cycle(dry_run=True) nunca chama Mikrotik -------------------------
+# NOTA (Fase 6F): a partir desta fase, TODA chamada a run_billing_cycle gera
+# um evento "billing.run_cycle.trigger" (audit-only) — não é mais verdade
+# que "nenhum evento de CP" é gerado. O que continua valendo (e o que estes
+# testes agora provam) é que NENHUM evento de MUTAÇÃO (block_subscriber/
+# unblock_subscriber) aparece quando dry_run=True ou quando o cap aborta.
 
 def test_run_billing_cycle_dry_run_never_touches_cp_or_mikrotik(fake_mikrotik):
     db_module.add_subscriber("c1", "203.0.113.5", invoice_status="pendente", days_overdue=10)
@@ -344,10 +353,13 @@ def test_run_billing_cycle_dry_run_never_touches_cp_or_mikrotik(fake_mikrotik):
     assert fake_mikrotik["block"] == []
     assert fake_mikrotik["unblock"] == []
     assert db_module.get_subscriber("c1")[5] == "ativo"
-    assert _cp_decision_events() == []
+    blob = " ".join(_cp_decision_events())
+    assert "action=billing.run_cycle.trigger" in blob  # disparo É auditado (Fase 6F)
+    assert "action=block_subscriber" not in blob        # mutação NÃO é chamada
+    assert "action=unblock_subscriber" not in blob
 
 
-# ------------------------- 9: cap de lote aborta ANTES de qualquer CP/Mikrotik -------------------------
+# ------------------------- 9: cap de lote aborta ANTES de qualquer mutação/Mikrotik -------------------------
 
 def test_cap_aborts_before_cp_or_mikrotik(fake_mikrotik, monkeypatch):
     monkeypatch.setattr(billing.notify, "send_notification", lambda *a, **k: True)
@@ -360,7 +372,9 @@ def test_cap_aborts_before_cp_or_mikrotik(fake_mikrotik, monkeypatch):
     assert "ABORTADO POR SEGURANÇA" in summary
     assert fake_mikrotik["block"] == []
     assert all(db_module.get_subscriber(f"c{i}")[5] == "ativo" for i in range(6))
-    assert _cp_decision_events() == []
+    blob = " ".join(_cp_decision_events())
+    assert "action=billing.run_cycle.trigger" in blob  # disparo É auditado (Fase 6F)
+    assert "action=block_subscriber" not in blob        # cap aborta antes do laço
 
 
 # ------------------------- 10: block_subscriber_by_id/unblock_subscriber_by_id são governados -------------------------
@@ -436,6 +450,187 @@ def test_agent_tools_still_delegate_to_governed_billing_functions():
     assert "billing.unblock_subscriber_by_id(" in unblock_src
 
 
+# ======================= CP-SD Fase 6F: disparo de run_billing_cycle =======================
+# O disparo (não a mutação — já protegida na Fase 6D) agora gera um evento
+# audit-only "billing.run_cycle.trigger" (changes_state=False, LOW, sem
+# aprovação): registra actor/role/modo/dry_run de quem disparou, sem poder
+# travar o job automático diário nem substituir o gate de block/unblock.
+
+def _trigger_events() -> list[str]:
+    return [e for e in _cp_decision_events() if "action=billing.run_cycle.trigger" in e]
+
+
+# ------------------------- 1/2: identidade do disparo (sem Principal vs. real) -------------------------
+
+def test_trigger_without_context_principal_uses_service_billing(fake_mikrotik):
+    """Caso do subscriber_billing_loop automático: sem Principal no
+    ContextVar, o disparo usa SERVICE_BILLING_PRINCIPAL (service:billing)."""
+    assert cp.get_current_principal() is None
+
+    billing.run_billing_cycle(min_days=5, dry_run=True)
+
+    blob = " ".join(_trigger_events())
+    assert "actor=service:billing" in blob
+    assert "role=service" in blob
+    assert "dry_run" in blob and "True" in blob
+
+
+def test_trigger_inside_noc_operator_context_preserves_real_identity(fake_mikrotik):
+    """Com um Principal real já no contexto (REST/chat), o disparo NÃO pode
+    virar service:billing — preserva o actor/role real."""
+    noc_principal = rbac.Principal("user:ana", "noc_operator")
+
+    with cp.principal_context(noc_principal):
+        billing.run_billing_cycle(min_days=5, dry_run=True)
+
+    blob = " ".join(_trigger_events())
+    assert "actor=user:ana" in blob
+    assert "role=noc_operator" in blob
+    assert "actor=service:billing" not in blob
+
+
+# ------------------------- 3: readonly não dispara o ciclo (nem preview) -------------------------
+# Decisão deliberada desta fase (documentada aqui e no docstring de
+# run_billing_cycle): UM ÚNICO gate cobre o ciclo inteiro (dry_run=True e
+# dry_run=False) — antes desta fase não havia NENHUM RBAC neste ponto, então
+# negar também o preview para papéis sem a permissão nova é um ENDURECIMENTO,
+# não uma regressão. A "Preferência" do enunciado (readonly nunca executa o
+# disparo REAL, dry_run=False) é satisfeita a fortiori.
+
+def test_trigger_inside_readonly_context_denies_dry_run_false(fake_mikrotik):
+    db_module.add_subscriber("c1", "203.0.113.5", invoice_status="pendente", days_overdue=10)
+    readonly_principal = rbac.Principal("user:bob", "readonly")
+
+    with cp.principal_context(readonly_principal):
+        summary = billing.run_billing_cycle(min_days=5, dry_run=False)
+
+    assert "NEGADO" in summary
+    assert fake_mikrotik["block"] == []
+    assert db_module.get_subscriber("c1")[5] == "ativo"
+    blob = " ".join(_trigger_events())
+    assert "actor=user:bob" in blob
+    assert "role=readonly" in blob
+    assert "decision=deny" in blob
+
+
+def test_trigger_inside_readonly_context_denies_dry_run_true_too(fake_mikrotik):
+    """Documentado explicitamente: esta fase NEGA também o preview
+    (dry_run=True) para papéis sem "billing.run_cycle.trigger" — decisão
+    deliberada de manter um único gate simples, não uma falha."""
+    readonly_principal = rbac.Principal("user:bob", "readonly")
+
+    with cp.principal_context(readonly_principal):
+        summary = billing.run_billing_cycle(min_days=5, dry_run=True)
+
+    assert "NEGADO" in summary
+    assert fake_mikrotik["block"] == []
+
+
+# ------------------------- 4/5: dry_run=True vs. dry_run=False -------------------------
+
+def test_trigger_dry_run_true_generates_trigger_but_no_mutation(fake_mikrotik):
+    db_module.add_subscriber("c1", "203.0.113.5", invoice_status="pendente", days_overdue=10)
+
+    summary = billing.run_billing_cycle(min_days=5, dry_run=True)
+
+    assert "DRY-RUN" in summary
+    assert fake_mikrotik["block"] == []
+    blob = " ".join(_cp_decision_events())
+    assert "action=billing.run_cycle.trigger" in blob
+    assert "action=block_subscriber" not in blob
+
+
+def test_trigger_dry_run_false_generates_trigger_and_mutation_still_via_cp(fake_mikrotik):
+    db_module.add_subscriber("c1", "203.0.113.5", invoice_status="pendente", days_overdue=10)
+
+    summary = billing.run_billing_cycle(min_days=5, dry_run=False)
+
+    assert "concluído" in summary
+    assert fake_mikrotik["block"] == ["203.0.113.5"]
+    blob = " ".join(_cp_decision_events())
+    assert "action=billing.run_cycle.trigger" in blob
+    assert "action=block_subscriber" in blob  # mutação continua passando pelo CP (Fase 6D)
+
+
+# ------------------------- 6: lab/replay -> trigger NÃO vira DRY_RUN_ONLY; mutação sim -------------------------
+
+def test_trigger_in_lab_mode_still_fires_but_mutation_becomes_dry_run(fake_mikrotik):
+    db_module.add_subscriber("c1", "203.0.113.5", invoice_status="pendente", days_overdue=10)
+    operating_mode.set_operating_mode("lab")
+
+    billing.run_billing_cycle(min_days=5, dry_run=False)
+
+    assert fake_mikrotik["block"] == []  # mutação virou dry-run, Mikrotik nunca chamado
+    blob = " ".join(_cp_decision_events())
+    trigger_blob = " ".join(_trigger_events())
+    assert "decision=allow" in trigger_blob  # o TRIGGER em si roda normalmente (changes_state=False)
+    assert "action=block_subscriber" in blob
+    assert "decision=dry_run_only" in blob  # a MUTAÇÃO interna é que vira dry-run
+
+
+# ------------------------- 7: cap continua abortando; trigger auditado -------------------------
+
+def test_trigger_cap_aborted_cycle_is_still_audited(fake_mikrotik, monkeypatch):
+    monkeypatch.setattr(billing.notify, "send_notification", lambda *a, **k: True)
+    for i in range(6):
+        db_module.add_subscriber(f"c{i}", f"203.0.113.{10 + i}",
+                                 invoice_status="pendente", days_overdue=9)
+
+    summary = billing.run_billing_cycle(min_days=5, max_batch=3)
+
+    assert "ABORTADO POR SEGURANÇA" in summary
+    assert fake_mikrotik["block"] == []
+    # 2 linhas por trigger ALLOW (control_plane_decision + control_plane_executed,
+    # ver core/control_plane.request_action) — nenhuma delas é de mutação.
+    assert len(_trigger_events()) == 2
+    assert not any("action=block_subscriber" in e for e in _cp_decision_events())
+
+
+# ------------------------- 8: REST preserva actor/role e o contrato HTTP -------------------------
+
+def test_noc_api_run_billing_preserves_actor_role_in_trigger(fake_mikrotik):
+    from tools import noc_api
+
+    result = noc_api.run_billing(dry_run=True, actor="user:carla", role="noc_operator")
+
+    assert set(result.keys()) == {"message"}  # contrato HTTP inalterado
+    assert "DRY-RUN" in result["message"]
+    blob = " ".join(_trigger_events())
+    assert "actor=user:carla" in blob
+    assert "role=noc_operator" in blob
+
+
+def test_noc_api_run_billing_without_actor_role_falls_back_to_service(fake_mikrotik):
+    """Chamada direta (sem actor/role, ex.: testes antigos) continua
+    funcionando exatamente como antes — cai no fallback já existente."""
+    from tools import noc_api
+
+    result = noc_api.run_billing(dry_run=True)
+
+    assert set(result.keys()) == {"message"}
+    blob = " ".join(_trigger_events())
+    assert "actor=service:billing" in blob
+
+
+# ------------------------- 9: agente herda o Principal do ContextVar no trigger -------------------------
+
+def test_agent_run_billing_cycle_now_trigger_inherits_context_principal(fake_mikrotik):
+    """Se `run_billing_cycle_now` (agente) roda dentro do ContextVar setado
+    por ask_agent (aqui simulado diretamente via principal_context, para não
+    precisar subir o agente/LLM real), o disparo herda essa identidade sem
+    precisar de nenhuma mudança em agents/nexus_agent.py."""
+    import agents.nexus_agent as agent_module
+
+    noc_principal = rbac.Principal("chat:ana", "noc_operator")
+
+    with cp.principal_context(noc_principal):
+        agent_module.run_billing_cycle_now.func(dry_run=True)
+
+    blob = " ".join(_trigger_events())
+    assert "actor=chat:ana" in blob
+    assert "role=noc_operator" in blob
+
+
 # ------------------------- 17/18: RBAC do papel "service" -------------------------
 
 def test_service_role_gained_only_the_two_billing_permissions():
@@ -444,6 +639,7 @@ def test_service_role_gained_only_the_two_billing_permissions():
     assert "noc.unblock_subscriber" in perms
     assert "noc.billing" not in perms
     assert "noc.*" not in perms
+    assert "billing.*" not in perms
     assert "*" not in perms
 
 
@@ -453,13 +649,21 @@ def test_service_billing_principal_role_is_service_not_admin():
     assert rbac.SERVICE_BILLING_PRINCIPAL.actor == "service:billing"
 
 
-# ------------------------- 19: papéis humanos inalterados -------------------------
+# ------------------------- 19: papéis humanos inalterados (exceto noc_operator, Fase 6F) -------------------------
 
 def test_human_roles_unchanged_after_phase_6d():
+    """admin/soc_analyst/auditor/readonly: intocados desde sempre.
+    noc_operator: a ÚNICA mudança em papel humano deste arco (Fase 6F) —
+    ganhou "billing.run_cycle.trigger" explicitamente, porque o wildcard
+    "noc.*" (namespace "noc.") não cobre o namespace "billing." do novo
+    action_type. Necessário para não regredir o uso já legítimo de
+    POST /api/billing/run por noc_operator (que já passa pelo
+    require_permission("noc.billing") da REST)."""
     assert rbac.ROLE_PERMISSIONS["admin"] == {"*"}
     assert rbac.ROLE_PERMISSIONS["soc_analyst"] == {"read", "audit", "defense.*", "investigate.*"}
     assert rbac.ROLE_PERMISSIONS["noc_operator"] == {
         "read", "noc.*", "defense.block_ip", "defense.unblock_ip",
+        "billing.run_cycle.trigger",
     }
     assert rbac.ROLE_PERMISSIONS["auditor"] == {"read", "audit"}
     assert rbac.ROLE_PERMISSIONS["readonly"] == {"read"}
@@ -470,4 +674,5 @@ def test_service_role_full_permission_set_after_phase_6d():
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
         "noc.block_subscriber", "noc.unblock_subscriber",
+        "billing.run_cycle.trigger",
     }

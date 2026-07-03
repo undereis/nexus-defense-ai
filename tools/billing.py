@@ -67,7 +67,8 @@ def _is_mikrotik_failure(result: str) -> bool:
 
 
 def _billing_principal_context():
-    """Identidade a usar na chamada ao Control Plane dentro de block/unblock.
+    """Identidade a usar na chamada ao Control Plane dentro de block/unblock
+    e do disparo do ciclo (`run_billing_cycle`, CP-SD Fase 6F).
 
     NUNCA sobrescreve um Principal real já propagado no contexto (chat/API/
     Slack/Telegram, ou qualquer chamada que já esteja dentro de um
@@ -75,8 +76,15 @@ def _billing_principal_context():
     SERVICE_BILLING_PRINCIPAL quando NINGUÉM setou Principal (caso do
     `subscriber_billing_loop` automático, que não tem identidade própria).
     Sobrescrever incondicionalmente seria elevação de privilégio: um
-    chamador sem noc.block_subscriber/noc.unblock_subscriber (ex.: readonly
-    via chat) poderia "virar" service:billing só por invocar a tool."""
+    chamador sem a permissão exigida (ex.: readonly via chat) poderia
+    "virar" service:billing só por invocar a tool.
+
+    Reaproveitada pelo disparo do ciclo: como `run_billing_cycle` entra neste
+    mesmo helper ANTES de chamar `block_subscriber`/`unblock_subscriber`
+    internamente, e este helper só entra em `principal_context` quando ainda
+    não há Principal ativo, o Principal resolvido para o disparo (real ou
+    SERVICE_BILLING_PRINCIPAL) permanece o mesmo durante todo o ciclo — nenhum
+    aninhamento redundante de contexto."""
     if cp.get_current_principal() is not None:
         return nullcontext()
     return cp.principal_context(rbac.SERVICE_BILLING_PRINCIPAL)
@@ -254,17 +262,13 @@ def unblock_subscriber_by_id(subscriber_id: str, reason: str = "desbloqueio manu
 
 # ---------- ciclo diário ----------
 
-def run_billing_cycle(min_days: int | None = None, max_batch: int | None = None,
-                      dry_run: bool = False) -> str:
-    """Roda um ciclo de cobrança: bloqueia inadimplentes e reativa quem pagou.
-
-    dry_run=True apenas LISTA o que faria, sem tocar no firewall. O CAP de
-    segurança aborta o ciclo inteiro se o número de inadimplentes for anormal.
-    """
-    min_days = SUBSCRIBER_BLOCK_DAYS if min_days is None else min_days
-    max_batch = SUBSCRIBER_BLOCK_MAX_BATCH if max_batch is None else max_batch
-    source = get_billing_source()
-
+def _run_billing_cycle_impl(source: BillingSource, min_days: int, max_batch: int,
+                            dry_run: bool) -> str:
+    """Lógica ORIGINAL do ciclo de cobrança (cap, listagem, bloqueio/
+    reativação, notificação) — intocada desde antes da CP-SD Fase 6F, exceto
+    por virar uma função interna chamada como executor do disparo auditado
+    em `run_billing_cycle`. `block_subscriber`/`unblock_subscriber` (Fase 6D)
+    continuam sendo o único ponto que toca o Mikrotik de verdade."""
     try:
         delinquent = source.list_delinquent(min_days)
         reactivated = source.list_reactivated()
@@ -322,3 +326,48 @@ def run_billing_cycle(min_days: int | None = None, max_batch: int | None = None,
               action_taken="concluido")
     notify.send_notification("Nexus: ciclo de cobrança", summary)
     return summary
+
+
+def run_billing_cycle(min_days: int | None = None, max_batch: int | None = None,
+                      dry_run: bool = False) -> str:
+    """Roda um ciclo de cobrança: bloqueia inadimplentes e reativa quem pagou.
+
+    dry_run=True apenas LISTA o que faria, sem tocar no firewall. O CAP de
+    segurança aborta o ciclo inteiro se o número de inadimplentes for anormal.
+
+    CP-SD Fase 6F: o DISPARO do ciclo (não a mutação — já protegida desde a
+    Fase 6D) passa por `cp.request_action` com o action_type audit-only
+    `"billing.run_cycle.trigger"` (`changes_state=False`, LOW, sem
+    aprovação) — registra actor/role/modo/dry_run de quem disparou, sem
+    bloquear o job automático diário. Se o papel não tiver a permissão, o
+    ciclo INTEIRO não roda (nem o preview de `dry_run=True`) — decisão
+    deliberada: antes desta fase não havia NENHUM RBAC neste ponto; isso é
+    um endurecimento, não um afrouxamento."""
+    resolved_min_days = SUBSCRIBER_BLOCK_DAYS if min_days is None else min_days
+    resolved_max_batch = SUBSCRIBER_BLOCK_MAX_BATCH if max_batch is None else max_batch
+    billing_source = get_billing_source()
+
+    def _execute_cycle(dry_run: bool, min_days: int, source: str) -> str:
+        return _run_billing_cycle_impl(billing_source, min_days, resolved_max_batch, dry_run)
+
+    with _billing_principal_context():
+        req = cp.make_request(
+            "billing.run_cycle.trigger", target="billing_cycle",
+            params={
+                "dry_run": dry_run,
+                "min_days": resolved_min_days,
+                "source": type(billing_source).__name__,
+            },
+        )
+        res = cp.request_action(req, executor=_execute_cycle, tool_name="cp_billing_run_cycle_trigger")
+
+    if res.status is cp.ActionStatus.DENIED:
+        return f"Ciclo de cobrança NEGADO pela governança: {res.output}"
+
+    if res.status is cp.ActionStatus.FAILED:
+        return f"Ciclo de cobrança falhou: {res.output}"
+
+    # DRY_RUN_ONLY é estruturalmente inatingível aqui: "billing.run_cycle.trigger"
+    # é changes_state=False, então o passo 6 da policy (cinto de modo) nunca
+    # se aplica a este action_type — só às mutações internas (block/unblock).
+    return res.output
