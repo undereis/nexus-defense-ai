@@ -72,16 +72,12 @@ def test_reconcile_loop_without_drift_does_not_call_ask_agent(monkeypatch):
     assert captured == {}
 
 
-# ------------------------- 10/11: monitor_loop e proactive_audit_loop fora de escopo -------------------------
+# ------------------------- 10: monitor_loop fora de escopo -------------------------
+# proactive_audit_loop foi migrado na Fase 5C — ver
+# test_proactive_audit_loop_service_principal.py para as asserções sobre ele.
 
 def test_monitor_loop_source_unchanged_no_service_principal():
     src = inspect.getsource(main_module.monitor_loop)
-    assert "principal=" not in src
-    assert "SERVICE_" not in src
-
-
-def test_proactive_audit_loop_source_unchanged_no_service_principal():
-    src = inspect.getsource(main_module.proactive_audit_loop)
     assert "principal=" not in src
     assert "SERVICE_" not in src
 
@@ -94,7 +90,11 @@ def test_cli_interactive_ask_agent_call_still_has_no_principal():
     assert "ask_agent(user_text, principal" not in src
 
 
-def test_only_reconcile_loop_gained_explicit_principal_in_main_module():
-    src = inspect.getsource(main_module)
+def test_reconcile_loop_gained_explicit_principal_in_main_module():
+    """reconcile_loop (Fase 5B) tem exatamente uma chamada ask_agent com
+    SERVICE_RECONCILE_PRINCIPAL. A contagem GLOBAL de `principal=` em main.py
+    (quantos loops já foram migrados) é responsabilidade do teste dedicado de
+    cada fase que adiciona um novo loop — ver
+    test_proactive_audit_loop_service_principal.py (Fase 5C)."""
+    src = inspect.getsource(main_module.reconcile_loop)
     assert src.count("principal=rbac.SERVICE_RECONCILE_PRINCIPAL") == 1
-    assert src.count("principal=") == 1  # nenhuma outra chamada ask_agent ganhou principal

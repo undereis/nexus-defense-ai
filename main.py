@@ -221,7 +221,8 @@ def proactive_audit_loop(stop_event: threading.Event):
                     reply = ask_agent(
                         f"AUDITORIA PROATIVA: reauditei {host} (monitoramento automático que você "
                         f"autorizou) e o resultado mudou desde a última vez. Novo resultado:\n\n"
-                        f"{summary}\n\nMe avise resumidamente o que mudou e se é preocupante."
+                        f"{summary}\n\nMe avise resumidamente o que mudou e se é preocupante.",
+                        principal=rbac.SERVICE_PROACTIVE_AUDIT_PRINCIPAL,
                     )
                     _announce(reply)
                 else:
