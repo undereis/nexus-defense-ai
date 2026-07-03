@@ -57,6 +57,11 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     "report_ip_to_abuseipdb": ActionSpec("reputation.report_ip", True, ActionRisk.MEDIUM),
     "honeypot_start": ActionSpec("defense.honeypot", True, ActionRisk.MEDIUM),
     "honeypot_stop": ActionSpec("defense.honeypot", True, ActionRisk.MEDIUM),
+    # deception/honeytoken (CP-SD Fase 4A — plant_decoy_file/deploy_decoy_host
+    # migrados; plant_pppoe_honeytoken_username NÃO migrado — é função pura,
+    # sem executor real a gatear).
+    "plant_decoy_file": ActionSpec("deception.plant_decoy_file", True, ActionRisk.MEDIUM),
+    "deploy_decoy_host": ActionSpec("deception.deploy_decoy_host", True, ActionRisk.MEDIUM),
     # operação NOC
     "block_subscriber": ActionSpec("noc.block_subscriber", True, ActionRisk.MEDIUM),
     "unblock_subscriber": ActionSpec("noc.unblock_subscriber", True, ActionRisk.MEDIUM),
