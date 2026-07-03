@@ -185,7 +185,8 @@ def monitor_loop(stop_event: threading.Event):
                 ask_agent(
                     f"AVISO: acabei de isolar automaticamente o IP {ip} ({reason}), "
                     "pois estava muito acima do limite configurado." + findings_note +
-                    " Confirme que está registrado e me explique resumidamente o que foi feito."
+                    " Confirme que está registrado e me explique resumidamente o que foi feito.",
+                    principal=rbac.SERVICE_MONITOR_PRINCIPAL,
                 )
 
             # Caminho normal: ameaça moderada continua sendo avaliada pelo agente.
@@ -199,7 +200,7 @@ def monitor_loop(stop_event: threading.Event):
                     f"{', '.join(due_moderate)}. Avalie e decida se deve isolá-los, explicando o motivo."
                 )
                 _announce("Anomalia detectada, analisando...")
-                reply = ask_agent(alert)
+                reply = ask_agent(alert, principal=rbac.SERVICE_MONITOR_PRINCIPAL)
                 _announce(reply)
         except Exception as exc:
             log_event("monitor_error", None, str(exc))

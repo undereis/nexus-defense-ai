@@ -6,8 +6,9 @@ Agora passa `principal=rbac.SERVICE_RECONCILE_PRINCIPAL` (Fase 5A) — mudança 
 uma linha, sem alterar periodicidade, payload, lógica de reconcile ou try/except.
 
 monitor_loop e proactive_audit_loop CONTINUAM fora de escopo (não migrados
-nesta fase); o loop interativo do CLI continua chamando ask_agent sem
-principal de propósito (Fase 2: só o CLI local pode).
+nesta fase — ambos foram migrados depois, nas Fases 5D e 5C respectivamente);
+o loop interativo do CLI continua chamando ask_agent sem principal de
+propósito (Fase 2: só o CLI local pode).
 
 Nenhum loop real roda: reconcile_loop é chamado uma vez com um stop_event cujo
 `.wait()` já seta o evento (uma iteração só, sem while infinito real). Todas as
@@ -72,15 +73,9 @@ def test_reconcile_loop_without_drift_does_not_call_ask_agent(monkeypatch):
     assert captured == {}
 
 
-# ------------------------- 10: monitor_loop fora de escopo -------------------------
-# proactive_audit_loop foi migrado na Fase 5C — ver
-# test_proactive_audit_loop_service_principal.py para as asserções sobre ele.
-
-def test_monitor_loop_source_unchanged_no_service_principal():
-    src = inspect.getsource(main_module.monitor_loop)
-    assert "principal=" not in src
-    assert "SERVICE_" not in src
-
+# monitor_loop foi migrado na Fase 5D e proactive_audit_loop na Fase 5C — ver
+# test_monitor_loop_service_principal.py e test_proactive_audit_loop_service_principal.py
+# para as asserções sobre eles.
 
 # ------------------------- 12/13: CLI interativo preservado + nenhuma chamada nova sem Principal -------------------------
 
