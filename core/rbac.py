@@ -58,9 +58,15 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # loops internos simples de main.py migrados ao Control Plane — nenhuma
     # concedida a outro papel (nem auditor/soc_analyst, que têm "audit"/
     # "defense.*"/"investigate.*", nenhum dos quais casa com estas strings).
+    # CP-SD Fase 6D acrescenta 2 permissões ESPECÍFICAS para a mutação real
+    # do billing (tools/billing.py:block_subscriber/unblock_subscriber) —
+    # DELIBERADAMENTE sem "noc.billing" (o disparo do ciclo inteiro continua
+    # fora do escopo desta fase) e sem o wildcard "noc.*" que "noc_operator"
+    # já tem (não estendido ao papel "service").
     "service": {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
+        "noc.block_subscriber", "noc.unblock_subscriber",
     },
 }
 
