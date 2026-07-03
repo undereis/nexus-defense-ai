@@ -54,7 +54,14 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # Serviço automático interno (CP-SD Fase 5A): conservador por padrão —
     # igual readonly. NUNCA "*"/admin. Fases futuras que migrarem cada loop
     # de fato decidem a permissão mínima ADICIONAL necessária por serviço.
-    "service": {"read"},
+    # CP-SD Fase 6B acrescenta 4 permissões ESPECÍFICAS (não wildcard) para os
+    # loops internos simples de main.py migrados ao Control Plane — nenhuma
+    # concedida a outro papel (nem auditor/soc_analyst, que têm "audit"/
+    # "defense.*"/"investigate.*", nenhum dos quais casa com estas strings).
+    "service": {
+        "read",
+        "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
+    },
 }
 
 

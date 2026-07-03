@@ -38,6 +38,7 @@ from config import (
     THREAT_FEED_REFRESH_INTERVAL_HOURS,
     WATCHDOG_INTERVAL,
 )
+from core import control_plane as cp
 from core import rbac
 from database.db import (
     get_findings_for_host,
@@ -256,7 +257,9 @@ def reconcile_loop(stop_event: threading.Event):
 def audit_checkpoint_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
-            create_checkpoint()
+            with cp.principal_context(rbac.SERVICE_WATCHDOG_PRINCIPAL):
+                req = cp.make_request("audit.checkpoint", target="audit_checkpoint")
+                cp.request_action(req, executor=create_checkpoint, tool_name="cp_audit_checkpoint")
         except Exception as exc:
             log_event("audit_checkpoint_error", None, str(exc))
         stop_event.wait(AUDIT_CHECKPOINT_INTERVAL)
@@ -265,9 +268,20 @@ def audit_checkpoint_loop(stop_event: threading.Event):
 def watchdog_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
-            healed = check_and_heal()
-            if healed:
-                _announce(f"Watchdog reergueu: {', '.join(healed)}")
+            captured: dict = {}
+
+            def _do():
+                # Captura a lista REAL (não a versão em string que o Control
+                # Plane devolve em .output) para a checagem de truthiness
+                # abaixo continuar correta mesmo com lista vazia.
+                captured["healed"] = check_and_heal()
+                return captured["healed"]
+
+            with cp.principal_context(rbac.SERVICE_WATCHDOG_PRINCIPAL):
+                req = cp.make_request("watchdog.check_health", target="watchdog")
+                cp.request_action(req, executor=_do, tool_name="cp_watchdog_check")
+            if captured.get("healed"):
+                _announce(f"Watchdog reergueu: {', '.join(captured['healed'])}")
         except Exception as exc:
             log_event("watchdog_error", None, str(exc))
         stop_event.wait(WATCHDOG_INTERVAL)
@@ -330,9 +344,19 @@ def dns_monitor_loop(stop_event: threading.Event):
 def risk_sweep_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
-            expired = sweep_expired()
-            if expired:
-                _announce(f"Ação(ões) pendente(s) expirada(s) sem confirmação: {expired}")
+            captured: dict = {}
+
+            def _do():
+                # Idem watchdog_loop: preserva a lista real para o `if`
+                # abaixo (uma string "[]" seria truthy por engano).
+                captured["expired"] = sweep_expired()
+                return captured["expired"]
+
+            with cp.principal_context(rbac.SERVICE_WATCHDOG_PRINCIPAL):
+                req = cp.make_request("risk.sweep_expired", target="risk_sweep")
+                cp.request_action(req, executor=_do, tool_name="cp_risk_sweep")
+            if captured.get("expired"):
+                _announce(f"Ação(ões) pendente(s) expirada(s) sem confirmação: {captured['expired']}")
         except Exception as exc:
             log_event("risk_sweep_error", None, str(exc))
         stop_event.wait(RISK_SWEEP_INTERVAL)
@@ -341,9 +365,16 @@ def risk_sweep_loop(stop_event: threading.Event):
 def report_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
-            report = generate_summary_report(REPORT_INTERVAL_HOURS)
-            send_notification(f"Nexus: resumo executivo ({REPORT_INTERVAL_HOURS:g}h)", report)
-            log_event("summary_report_sent", None, f"hours={REPORT_INTERVAL_HOURS}", action_taken="enviado")
+            with cp.principal_context(rbac.SERVICE_WATCHDOG_PRINCIPAL):
+                req = cp.make_request(
+                    "report.generate", target="report", params={"hours": REPORT_INTERVAL_HOURS}
+                )
+                result = cp.request_action(
+                    req, executor=generate_summary_report, tool_name="cp_report_generate"
+                )
+            if result.status is cp.ActionStatus.EXECUTED:
+                send_notification(f"Nexus: resumo executivo ({REPORT_INTERVAL_HOURS:g}h)", result.output)
+                log_event("summary_report_sent", None, f"hours={REPORT_INTERVAL_HOURS}", action_taken="enviado")
         except Exception as exc:
             log_event("report_error", None, str(exc))
         stop_event.wait(REPORT_INTERVAL_HOURS * 3600)

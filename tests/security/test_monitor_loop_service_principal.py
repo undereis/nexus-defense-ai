@@ -154,14 +154,19 @@ def test_exactly_four_service_principal_uses_wired_in_main_module():
 
 
 def test_no_other_service_principal_constant_used_in_main_module():
+    """Nesta fase (5D), só os 3 Service Principals do ask_agent deveriam
+    aparecer. CP-SD Fase 6B (posterior) passou a usar também
+    SERVICE_WATCHDOG_PRINCIPAL para os loops internos simples migrados via
+    cp.request_action — ver test_internal_loops_control_plane.py."""
     src = inspect.getsource(main_module)
     used_constants = {
         "SERVICE_MONITOR_PRINCIPAL",
         "SERVICE_RECONCILE_PRINCIPAL",
         "SERVICE_PROACTIVE_AUDIT_PRINCIPAL",
+        "SERVICE_WATCHDOG_PRINCIPAL",
     }
     all_service_names = {
         name for name in dir(rbac) if name.startswith("SERVICE_") and name.endswith("_PRINCIPAL")
     }
     for name in all_service_names - used_constants:
-        assert f"rbac.{name}" not in src, f"{name} não deveria ser usado em main.py nesta fase"
+        assert f"rbac.{name}" not in src, f"{name} não deveria ser usado em main.py ainda"

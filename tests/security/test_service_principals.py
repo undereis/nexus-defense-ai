@@ -104,11 +104,14 @@ def test_service_role_never_grants_wildcard():
     assert "*" not in perms
 
 
-def test_service_role_permission_is_conservative_like_readonly():
-    """Papel "service" começa NO MESMO nível de "readonly" — nenhuma
-    permissão extra concedida nesta fase (fica para quando cada loop for
-    de fato migrado)."""
-    assert rbac.ROLE_PERMISSIONS["service"] == rbac.ROLE_PERMISSIONS["readonly"]
+def test_service_role_permission_includes_readonly_baseline():
+    """Papel "service" começou (Fase 5A) no MESMO nível de "readonly". Fases
+    futuras que migrarem cada loop de fato concedem permissão mínima
+    ADICIONAL — ver CP-SD Fase 6B (risk.sweep_expired/audit.checkpoint/
+    watchdog.check_health/report.generate) em
+    test_internal_loops_control_plane.py. O baseline "read" nunca é
+    removido; "service" é sempre um superconjunto de "readonly"."""
+    assert rbac.ROLE_PERMISSIONS["readonly"].issubset(rbac.ROLE_PERMISSIONS["service"])
 
 
 # ------------------------- 4/5: principal_context + make_request herdam -------------------------
