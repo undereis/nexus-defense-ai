@@ -18,24 +18,46 @@ CP-SD Fase 6H: o envio real (sender + avanço de cursor) passa por
 RBAC nega sem tocar rede; lab/replay vira DRY_RUN_ONLY (nunca chama
 requests.post). `is_enabled()`/modo inválido/"nada novo para enviar"
 continuam resolvidos ANTES do Control Plane (não criam ActionRequest à toa).
+
+CP-SD Fase 6J/6K: quando a decisão é DENY/DRY_RUN_ONLY, nada é enviado e o
+cursor não avança — o Control Plane reauditaria a MESMA decisão a cada
+`SIEM_FORWARD_INTERVAL` (60s padrão), gravando um `control_plane_decision`
+novo por ciclo pra sempre (achado 6I/6J: cresce sem nunca sair da fila e
+pode enfileirar eventos reais atrás do próprio ruído). Um cooldown de
+reavaliação (`siem_state.last_blocked_*`, `SIEM_REAUDIT_COOLDOWN_SECONDS`)
+pula a reauditoria enquanto a MESMA combinação action_type/decisão/modo/
+actor/role continuar bloqueada — sem tocar `events`/hash chain, sem avançar
+cursor, sem descartar o lote real que segue preso até a causa ser corrigida.
 """
 
 import json
 from contextlib import nullcontext
+from datetime import datetime, timezone
 
 import requests
 
-from config import SIEM_BATCH, SIEM_INDEX, SIEM_MODE, SIEM_TOKEN, SIEM_URL
+from config import (
+    SIEM_BATCH,
+    SIEM_INDEX,
+    SIEM_MODE,
+    SIEM_REAUDIT_COOLDOWN_SECONDS,
+    SIEM_TOKEN,
+    SIEM_URL,
+)
 from core import control_plane as cp
-from core import rbac
+from core import operating_mode, rbac
 from database.db import (
+    clear_siem_blocked_state,
     get_events_after_id,
+    get_siem_blocked_state,
     get_siem_cursor,
     log_event,
+    set_siem_blocked_state,
     set_siem_cursor,
 )
 
 _TIMEOUT = 15
+_BLOCKED_STATUSES = (cp.ActionStatus.DENIED.value, cp.ActionStatus.DRY_RUN.value)
 
 
 def is_enabled() -> bool:
@@ -111,6 +133,33 @@ def _post_webhook(docs: list[dict]) -> bool:
 _SENDERS = {"elastic": _post_elastic, "splunk": _post_splunk, "webhook": _post_webhook}
 
 
+def _effective_principal():
+    """Mesma regra da `_siem_principal_context()`: Principal real se já
+    houver um no ContextVar, senão SERVICE_SIEM_PRINCIPAL — usada aqui só
+    para LER a identidade que o Control Plane vai resolver (comparação de
+    cooldown), sem entrar no contexto."""
+    return cp.get_current_principal() or rbac.SERVICE_SIEM_PRINCIPAL
+
+
+def _seconds_until_cooldown_expires(blocked_at: str) -> float:
+    ts = datetime.strptime(blocked_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    elapsed = (datetime.now(timezone.utc) - ts).total_seconds()
+    return SIEM_REAUDIT_COOLDOWN_SECONDS - elapsed
+
+
+def _blocked_state_still_applies(blocked: dict, actor: str, role: str, op_mode: str) -> bool:
+    """True se o bloqueio registrado é a MESMA situação de agora (mesma ação,
+    mesma decisão DENY/DRY_RUN, mesmo modo operacional, mesmo actor/role) e o
+    cooldown ainda não expirou — reavaliar de novo seria redundante."""
+    if blocked["action_type"] != "siem.forward_events":
+        return False
+    if blocked["decision"] not in _BLOCKED_STATUSES:
+        return False
+    if blocked["mode"] != op_mode or blocked["actor"] != actor or blocked["role"] != role:
+        return False
+    return _seconds_until_cooldown_expires(blocked["blocked_at"]) > 0
+
+
 def forward_new_events() -> str:
     """Envia os eventos ainda não encaminhados ao SIEM e avança o cursor só se
     o destino confirmou. Retorna um resumo (nunca levanta).
@@ -118,7 +167,13 @@ def forward_new_events() -> str:
     CP-SD Fase 6H: o envio real (sender + avanço de cursor) passa pelo
     Control Plane — RBAC nega sem tocar rede; lab/replay vira DRY_RUN_ONLY
     (nunca chama requests.post). ALLOW executa e só avança o cursor se o
-    destino confirmar, exatamente como antes."""
+    destino confirmar, exatamente como antes.
+
+    CP-SD Fase 6K: se a última tentativa foi DENY/DRY_RUN_ONLY para a MESMA
+    combinação de modo/actor/role e o cooldown não expirou, retorna cedo sem
+    consultar o Control Plane de novo — não audita, não avança cursor, não
+    chama sender. O lote real continua intacto para quando a causa (RBAC ou
+    modo) for corrigida."""
     if not is_enabled():
         return "SIEM desligado (SIEM_MODE=off ou SIEM_URL vazio)."
     sender = _SENDERS.get(SIEM_MODE)
@@ -129,6 +184,15 @@ def forward_new_events() -> str:
     rows = get_events_after_id(last, SIEM_BATCH)
     if not rows:
         return "SIEM: nada novo para enviar."
+
+    effective = _effective_principal()
+    op_mode = operating_mode.get_operating_mode()
+
+    blocked = get_siem_blocked_state()
+    if blocked and _blocked_state_still_applies(blocked, effective.actor, effective.role, op_mode):
+        remaining = max(0, int(_seconds_until_cooldown_expires(blocked["blocked_at"])))
+        return (f"SIEM: envio ainda bloqueado por governança ({blocked['decision']}); "
+                f"reavaliação em cooldown (faltam ~{remaining}s).")
 
     docs = [_event_to_doc(r) for r in rows]
     candidate_cursor = rows[-1][0]
@@ -157,6 +221,19 @@ def forward_new_events() -> str:
             },
         )
         res = cp.request_action(req, executor=_do_send, tool_name="cp_siem_forward_events")
+
+    # CP-SD Fase 6K: bookkeeping do cooldown — DENY/DRY_RUN registra o
+    # bloqueio (com a identidade/modo desta tentativa); qualquer outro
+    # desfecho (ALLOW com sucesso OU com falha de sender/exceção) limpa,
+    # porque a POLICY permitiu — problema de rede/destino não é bloqueio de
+    # governança e não deve entrar em cooldown de reavaliação.
+    if res.status.value in _BLOCKED_STATUSES:
+        set_siem_blocked_state(
+            "siem.forward_events", res.status.value, op_mode, effective.actor, effective.role,
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+        )
+    else:
+        clear_siem_blocked_state()
 
     if res.status is cp.ActionStatus.DENIED:
         return f"SIEM: envio NEGADO pela governança: {res.output}"
