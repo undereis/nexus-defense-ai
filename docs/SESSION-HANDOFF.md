@@ -22,6 +22,8 @@ operador**, com mensagem e lista de arquivos exatos fornecidos por ele; nunca
 
 ## Fases concluídas (commits, mais recentes primeiro)
 
+- (sem commit) **Fase 6I** — scoping do feedback loop SIEM/Control Plane
+  (achado da 6H aprofundado). Sem mudança de código.
 - `28e1503` **Fase 6H** — `tools/siem.py:forward_new_events` (envio real ao SIEM
   externo) governado pelo Control Plane.
 - (sem commit) **Fase 6G** — scoping read-only do `siem_loop`/`tools/siem.py`.
@@ -111,23 +113,68 @@ novos registros → ...
 
 **Isso não foi corrigido na Fase 6H, de propósito.** Filtrar esses eventos
 mudaria o contrato do que o SIEM exporta — decisão de produto/arquitetura,
-não uma correção óbvia. Fica para uma fase própria de scoping.
+não uma correção óbvia. Ficou para a Fase 6I de scoping.
+
+## Fase 6I (scoping) — o loop tem dois comportamentos distintos
+
+Aprofundando o achado da 6H, a Fase 6I concluiu que existem **dois casos com
+gravidade muito diferente**, não um único problema:
+
+- **Caso ALLOW (benigno):** em regime permanente, cada ciclo de sucesso
+  gera 2 eventos novos que o próximo ciclo reenvia — ~2 registros a cada
+  `SIEM_FORWARD_INTERVAL` (60s padrão) para sempre, mesmo sem nenhum evento
+  de segurança real. Volume desprezível para qualquer SIEM real; é ruído de
+  leitura para um analista, não um problema de escala.
+- **Caso DENY/DRY_RUN_ONLY (patológico):** `evaluate()` já loga 1
+  `control_plane_decision` **antes** de qualquer branch decidir DENY/DRY_RUN.
+  Nesses casos o executor nunca roda, o cursor **não avança**, e o próximo
+  ciclo relê o mesmo lote original que ficou preso **mais** esse novo evento
+  de decisão. O backlog não fica só parado — **cresce 1 evento por ciclo**,
+  indefinidamente, só com ruído do próprio Control Plane em cima de um lote
+  que nunca sai.
+
+Restrição técnica confirmada: `events` não tem coluna `action_type` — o tipo
+real da ação fica embutido como texto livre dentro de `detail`
+(`"action=siem.forward_events ..."`). Qualquer filtro seletivo (só para
+`siem.forward_events`, não para as ~23 outras ações governadas) exigiria
+parsear esse texto (frágil) ou mudar o schema (arriscado, fora de escopo —
+não pode tocar `_compute_entry_hash`/hash chain).
+
+**Decisão arquitetural tomada (2026-07-07):**
+
+1. Não filtrar `control_plane_decision`/`control_plane_executed` de forma
+   ampla — removeria do SIEM decisões de governança de outras ações
+   sensíveis (ex.: um DENY em `block_ip`).
+2. Não parsear `detail` por `action=siem.forward_events` nesta fase —
+   filtro frágil sobre texto pensado para humano.
+3. Não mexer em schema/hash chain agora — risco alto, fora de escopo.
+4. **Manter o caso ALLOW como está.** ~2 eventos/ciclo é ruído aceitável e
+   preserva completude forense.
+5. **Priorizar o caso DENY/DRY_RUN_ONLY.** Esse é o problema real: cursor
+   preso + backlog que cresce sem nunca esvaziar, só com auditoria do
+   próprio Control Plane.
 
 ## Próxima fase recomendada
 
-**CP-SD Fase 6I — scoping do feedback loop SIEM/Control Plane.**
+**CP-SD Fase 6J — scoping de implementação para evitar o crescimento
+infinito do backlog SIEM em DENY/DRY_RUN_ONLY, sem perder eventos reais
+não exportados.**
 
-Objetivo: decidir se os eventos do próprio `siem.forward_events` devem ser
-exportados normalmente, filtrados, marcados como internos, agregados,
-exportados com rate limit, ou mantidos como estão hoje. Não implementar
-antes do scoping. Avaliar impacto em auditoria, custo, ruído e completude
-forense. Decidir se `control_plane_decision`/`control_plane_executed`
-devem ser exportados ao SIEM sempre, nunca, ou com exceção só para
-`siem.forward_events`.
+Objetivo: quando `siem.forward_events` cai em DENY ou DRY_RUN_ONLY (RBAC,
+segurança dura, ou modo lab/replay), o `_do_send`/executor nunca roda e o
+cursor SIEM nunca avança — o mesmo lote de eventos reais fica preso para
+sempre, e cada tentativa acrescenta mais 1 evento de auditoria do próprio
+CP a esse backlog. Fase 6J é **scoping**, não implementação: mapear as
+opções (ex.: cursor separado para "confirmado enviado" vs "tentado";
+não auditar tentativas repetidas do mesmo estado; outro mecanismo) sem
+perder rastreabilidade dos eventos reais que ainda não saíram. Não
+implementar antes do scoping.
 
 ## Pendências restantes do CP-SD
 
-- **CP-SD Fase 6I** — feedback loop SIEM/Control Plane (ver acima).
+- **CP-SD Fase 6J** — evitar crescimento infinito do backlog SIEM em
+  DENY/DRY_RUN_ONLY (ver acima; scoping da 6I concluído, implementação
+  ainda não iniciada).
 - `threat_feed_refresh_loop`.
 - `asset_inventory_loop`.
 - `dns_monitor_loop` (cautela redobrada — incidente histórico contra o
@@ -174,6 +221,14 @@ devem ser exportados ao SIEM sempre, nunca, ou com exceção só para
   real (ex.: loop automático + tool do agente + REST), preferir o boundary
   DENTRO dessa função (não em cada call-site) — evita duplicação e
   inconsistência (padrão validado em billing e SIEM).
+- Auditoria não se filtra a si mesma por padrão (`core/audit_signing.py`
+  trata todos os eventos uniformemente) — qualquer exceção a essa regra
+  (ex.: SIEM filtrar seus próprios eventos de auditoria) é uma escolha
+  deliberada de produto, não uma correção óbvia (lição da Fase 6I).
+- `events` não tem coluna `action_type` — o tipo real da ação vive como
+  texto livre dentro de `detail`. Não usar isso como base para filtro
+  seletivo (frágil); qualquer filtro por ação exigiria schema novo, que é
+  fora de escopo enquanto não houver decisão explícita para tocar nisso.
 
 ## Estado de testes (últimas fases)
 
