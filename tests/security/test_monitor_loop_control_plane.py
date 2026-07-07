@@ -28,11 +28,35 @@ mesmo padrão de tests/security/test_monitor_loop_service_principal.py.
 
 import threading
 
+import pytest
+
 import database.db as db_module
 import main as main_module
 from core import control_plane as cp
 from core import rbac
 from tools import infrastructure
+
+
+@pytest.fixture(autouse=True)
+def _reset_monitor_auto_isolate_cooldown(monkeypatch):
+    """CP-SD Fase 6Q: `_monitor_auto_isolate_cooldown` é um dict real do
+    módulo (não recriado por `_run_one_iteration`, de propósito — os testes
+    de cooldown precisam que ele SOBREVIVA entre múltiplas chamadas dentro
+    do MESMO teste). Sem este fixture, o estado vazaria entre testes
+    diferentes na mesma sessão do pytest."""
+    monkeypatch.setattr(main_module, "_monitor_auto_isolate_cooldown", {})
+
+
+def _install_fake_monotonic(monkeypatch, start: float = 1_000_000.0) -> dict:
+    """Substitui time.monotonic() por um relógio controlável em memória —
+    nenhum teste de cooldown depende de tempo real/sleep."""
+    state = {"now": start}
+    monkeypatch.setattr(main_module.time, "monotonic", lambda: state["now"])
+    return state
+
+
+def _decision_count() -> int:
+    return len(_cp_decision_events())
 
 
 def _cp_decision_events() -> list[str]:
@@ -361,3 +385,193 @@ def test_monitor_loop_without_threats_does_not_call_cp_or_agent(monkeypatch):
     result = _run_one_iteration(monkeypatch)
     assert result["block_calls"] == []
     assert result["ask_agent_calls"] == []
+
+
+# =====================================================================
+# CP-SD Fase 6Q — cooldown em memória para monitor.auto_isolate em
+# DENY/DRY_RUN_ONLY
+#
+# Achado da Fase 6P: o caminho threat_feed podia reauditar o MESMO IP a
+# cada MONITOR_POLL_INTERVAL (5s) indefinidamente em DENY/DRY_RUN_ONLY,
+# porque `_feed_blocked_ips` só é atualizado em EXECUTED (decisão da
+# Fase 6O, correta — não reverter). O caminho ddos_severe já tinha um
+# amortecedor pré-existente e independente (`_last_alerted`/
+# `ALERT_COOLDOWN_SECONDS=300s`, aqui neutralizado de propósito via
+# `_due_for_alert` mockado para `list(ips)`, para isolar e testar
+# especificamente o cooldown NOVO desta fase). Chave (ip, source) —
+# NUNCA ip sozinho. TTL = ALERT_COOLDOWN_SECONDS (300s), não os 1800s da
+# SIEM (Fase 6K) — monitor_loop é detecção em tempo real.
+# =====================================================================
+
+def test_threat_feed_deny_first_attempt_is_audited(monkeypatch):
+    ip = "203.0.113.70"
+    readonly = rbac.Principal("user:bob", "readonly")
+    _install_fake_monotonic(monkeypatch)
+
+    with cp.principal_context(readonly):
+        before = _decision_count()
+        result = _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+
+    assert result["block_calls"] == []
+    assert _decision_count() > before
+
+
+def test_threat_feed_deny_repeated_within_cooldown_is_suppressed(monkeypatch):
+    ip = "203.0.113.71"
+    readonly = rbac.Principal("user:bob", "readonly")
+    _install_fake_monotonic(monkeypatch)
+
+    with cp.principal_context(readonly):
+        _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+        after_first = _decision_count()
+        result2 = _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+
+    assert _decision_count() == after_first  # nenhum control_plane_decision novo
+    assert result2["block_calls"] == []
+    assert result2["confirmed_calls"] == []
+    assert ip not in result2["feed_blocked_ips"]
+    assert result2["announce_calls"] == []
+    assert result2["notify_calls"] == []
+
+
+def test_threat_feed_dry_run_lab_repeated_within_cooldown_is_suppressed(monkeypatch):
+    from core import operating_mode
+
+    ip = "203.0.113.72"
+    operating_mode.set_operating_mode("lab")
+    _install_fake_monotonic(monkeypatch)
+
+    _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+    after_first = _decision_count()
+    result2 = _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+
+    assert _decision_count() == after_first
+    assert result2["block_calls"] == []
+
+
+def test_threat_feed_dry_run_replay_repeated_within_cooldown_is_suppressed(monkeypatch):
+    from core import operating_mode
+
+    ip = "203.0.113.73"
+    operating_mode.set_operating_mode("replay")
+    _install_fake_monotonic(monkeypatch)
+
+    _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+    after_first = _decision_count()
+    result2 = _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+
+    assert _decision_count() == after_first
+    assert result2["block_calls"] == []
+
+
+def test_threat_feed_reaudits_after_ttl_expires(monkeypatch):
+    ip = "203.0.113.74"
+    readonly = rbac.Principal("user:bob", "readonly")
+    clock = _install_fake_monotonic(monkeypatch)
+
+    with cp.principal_context(readonly):
+        _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+        after_first = _decision_count()
+
+        clock["now"] += main_module.MONITOR_AUTO_ISOLATE_COOLDOWN_SECONDS + 1
+
+        _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+
+    assert _decision_count() > after_first
+
+
+def test_threat_feed_reaudits_immediately_if_mode_changed(monkeypatch):
+    from core import operating_mode
+
+    ip = "203.0.113.75"
+    operating_mode.set_operating_mode("lab")
+    _install_fake_monotonic(monkeypatch)
+
+    _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+    after_first = _decision_count()
+
+    operating_mode.set_operating_mode("real")
+    result2 = _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+
+    assert _decision_count() > after_first
+    # sem Principal explícito -> service:monitor, que TEM a permissão; modo
+    # real -> ALLOW de verdade agora que o cooldown antigo (do modo lab) foi
+    # invalidado pela mudança de modo.
+    assert len(result2["block_calls"]) == 1
+    assert (ip, "threat_feed") not in main_module._monitor_auto_isolate_cooldown
+
+
+def test_threat_feed_reaudits_immediately_if_feeds_changed(monkeypatch):
+    ip = "203.0.113.76"
+    readonly = rbac.Principal("user:bob", "readonly")
+    _install_fake_monotonic(monkeypatch)
+
+    with cp.principal_context(readonly):
+        _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+        after_first = _decision_count()
+
+        _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop", "feodo_tracker"]})
+
+    assert _decision_count() > after_first
+
+
+def test_executed_clears_cooldown(monkeypatch):
+    ip = "203.0.113.77"
+    from core import operating_mode
+
+    operating_mode.set_operating_mode("lab")
+    _install_fake_monotonic(monkeypatch)
+
+    _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+    assert (ip, "threat_feed") in main_module._monitor_auto_isolate_cooldown
+
+    operating_mode.set_operating_mode("real")
+    result2 = _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]})
+
+    assert len(result2["block_calls"]) == 1
+    assert ip in result2["feed_blocked_ips"]
+    assert (ip, "threat_feed") not in main_module._monitor_auto_isolate_cooldown
+
+
+def test_ddos_severe_deny_repeated_within_cooldown_is_suppressed(monkeypatch):
+    """`_due_for_alert` continua mockado para `list(ips)` (neutraliza o
+    amortecedor pré-existente de ALERT_COOLDOWN_SECONDS/_last_alerted) —
+    isola e prova o cooldown NOVO desta fase, independente do mecanismo
+    antigo, que continua intacto para o uso real do produto."""
+    ip = "203.0.113.78"
+    readonly = rbac.Principal("user:bob", "readonly")
+    _install_fake_monotonic(monkeypatch)
+
+    with cp.principal_context(readonly):
+        _run_one_iteration(monkeypatch, severe_ips=[ip])
+        after_first = _decision_count()
+        result2 = _run_one_iteration(monkeypatch, severe_ips=[ip])
+
+    assert _decision_count() == after_first
+    assert result2["block_calls"] == []
+    assert result2["confirmed_calls"] == []
+    assert result2["ask_agent_calls"] == []
+
+
+def test_cooldown_key_is_per_ip_and_source_not_shared(monkeypatch):
+    """O mesmo IP em threat_feed E ddos_severe simultaneamente gera 2
+    entradas de cooldown INDEPENDENTES — suprimir uma não deve suprimir a
+    outra por engano."""
+    ip = "203.0.113.79"
+    readonly = rbac.Principal("user:bob", "readonly")
+    _install_fake_monotonic(monkeypatch)
+
+    with cp.principal_context(readonly):
+        _run_one_iteration(monkeypatch, feed_ips={ip: ["spamhaus_drop"]}, severe_ips=[ip])
+        assert (ip, "threat_feed") in main_module._monitor_auto_isolate_cooldown
+        assert (ip, "ddos_severe") in main_module._monitor_auto_isolate_cooldown
+        after_first = _decision_count()
+
+        result2 = _run_one_iteration(
+            monkeypatch, feed_ips={ip: ["spamhaus_drop"]}, severe_ips=[ip],
+        )
+
+    # as DUAS tentativas (threat_feed e ddos_severe) foram suprimidas
+    # independentemente, cada uma pela SUA PRÓPRIA entrada de cooldown.
+    assert _decision_count() == after_first
+    assert result2["block_calls"] == []

@@ -40,6 +40,7 @@ from config import (
     WATCHDOG_INTERVAL,
 )
 from core import control_plane as cp
+from core import operating_mode
 from core import rbac
 from database.db import (
     get_findings_for_host,
@@ -74,6 +75,27 @@ from tools.watchdog import check_and_heal
 _last_alerted: dict[str, float] = {}
 _feed_blocked_ips: set[str] = set()
 
+# CP-SD Fase 6Q: cooldown EM MEMÓRIA (não é siem_state, não toca DB/events/
+# hash chain) para evitar reauditar via Control Plane uma decisão
+# DENY/DRY_RUN_ONLY IDÊNTICA de monitor.auto_isolate a cada
+# MONITOR_POLL_INTERVAL (5s). Chave (ip, source) — NUNCA ip sozinho, para
+# não confundir o motivo de detecção threat_feed com ddos_severe do mesmo
+# IP (achado da Fase 6P). Distinto de propósito de `_feed_blocked_ips`
+# (que significa "bloqueado de verdade") — este dict só existe pra decidir
+# se vale a pena consultar o CP de novo, nunca é lido como "IP tratado".
+_monitor_auto_isolate_cooldown: dict[tuple[str, str], dict] = {}
+
+# Reaproveita ALERT_COOLDOWN_SECONDS (já importado, já usado por
+# _due_for_alert) em vez de um número mágico novo — mesmo valor (300s) que
+# já governa com que frequência o caminho ddos_severe reentra em
+# due_severe (achado da Fase 6P: esse mecanismo pré-existente já limitava
+# indiretamente o caminho ddos_severe; aqui aplicamos o MESMO cooldown
+# explicitamente aos dois caminhos, inclusive threat_feed, que não tinha
+# nenhum amortecedor). monitor_loop é detecção em tempo real — 300s é bem
+# menor que os 1800s usados no cooldown análogo do SIEM (Fase 6K), de
+# propósito (não esconder uma ameaça ativa por meia hora).
+MONITOR_AUTO_ISOLATE_COOLDOWN_SECONDS = ALERT_COOLDOWN_SECONDS
+
 
 def _announce(message: str) -> None:
     """Imprime um aviso vindo de uma thread em background sem embaralhar
@@ -100,7 +122,15 @@ def _monitor_principal_context():
     return cp.principal_context(rbac.SERVICE_MONITOR_PRINCIPAL)
 
 
-def _monitor_auto_isolate(ip: str, reason: str, source: str, **extra_params) -> cp.ActionResult:
+def _monitor_auto_isolate_fingerprint(mode: str, reason: str, extra_params: dict) -> tuple:
+    """Captura tudo que, mudando, deve invalidar o cooldown na hora: modo
+    operacional, o motivo (texto já inclui a lista de feeds ou a contagem
+    quando reincidente) e os params extras crus (feeds/count) — comparados
+    por igualdade, não por hash (podem conter listas)."""
+    return (mode, reason, tuple(sorted(extra_params.items())))
+
+
+def _monitor_auto_isolate(ip: str, reason: str, source: str, **extra_params) -> tuple[cp.ActionResult, bool]:
     """CP-SD Fase 6O: governa as duas chamadas de auto-isolamento diretas
     de monitor_loop (bloqueio proativo por threat feed e auto-isolamento por
     DDoS/volume severo) pelo Control Plane, ANTES de firewall.block_ip ser
@@ -111,7 +141,31 @@ def _monitor_auto_isolate(ip: str, reason: str, source: str, **extra_params) -> 
     diferenciação — os dois caminhos usam o MESMO action_type
     "monitor.auto_isolate" (a decisão de governança é idêntica; só o motivo
     de detecção difere). O executor só roda em ALLOW — record_confirmed_isolation
-    (efeito de "isolamento confirmado") só acontece dentro dele, nunca fora."""
+    (efeito de "isolamento confirmado") só acontece dentro dele, nunca fora.
+
+    CP-SD Fase 6Q: antes de consultar o Control Plane, checa um cooldown EM
+    MEMÓRIA (`_monitor_auto_isolate_cooldown`, chave (ip, source)) — se a
+    ÚLTIMA tentativa para essa MESMA combinação foi DENIED/DRY_RUN, com o
+    MESMO modo/motivo/params e dentro do TTL, retorna cedo SEM montar
+    ActionRequest, SEM chamar cp.request_action, SEM gravar
+    control_plane_decision novo, SEM tocar firewall.block_ip. Retorna
+    (ActionResult, suppressed: bool) — o 2º valor deixa monitor_loop saber
+    que nada novo foi auditado (nem o log_event próprio dele deve repetir)."""
+    op_mode = operating_mode.get_operating_mode()
+    key = (ip, source)
+    fingerprint = _monitor_auto_isolate_fingerprint(op_mode, reason, extra_params)
+
+    cached = _monitor_auto_isolate_cooldown.get(key)
+    if cached is not None and cached["fingerprint"] == fingerprint:
+        elapsed = time.monotonic() - cached["last_attempt_at"]
+        if elapsed < MONITOR_AUTO_ISOLATE_COOLDOWN_SECONDS:
+            cached["suppressed_count"] = cached.get("suppressed_count", 0) + 1
+            suppressed_result = cp.ActionResult(
+                cached["status"], cached["decision"],
+                output="auto-isolamento suprimido temporariamente por cooldown de governança",
+            )
+            return suppressed_result, True
+
     def _do_isolate(**_ignored) -> str:
         result = firewall.block_ip(ip, reason)
         record_confirmed_isolation(ip, reason)
@@ -122,7 +176,20 @@ def _monitor_auto_isolate(ip: str, reason: str, source: str, **extra_params) -> 
             "monitor.auto_isolate", target=ip,
             params={"source": source, "reason": reason, **extra_params},
         )
-        return cp.request_action(req, executor=_do_isolate, tool_name="cp_monitor_auto_isolate")
+        res = cp.request_action(req, executor=_do_isolate, tool_name="cp_monitor_auto_isolate")
+
+    if res.status in (cp.ActionStatus.DENIED, cp.ActionStatus.DRY_RUN):
+        _monitor_auto_isolate_cooldown[key] = {
+            "status": res.status, "decision": res.decision, "fingerprint": fingerprint,
+            "last_attempt_at": time.monotonic(), "suppressed_count": 0,
+        }
+    elif res.status is cp.ActionStatus.EXECUTED:
+        _monitor_auto_isolate_cooldown.pop(key, None)
+    # outros status (ex.: FAILED, erro inesperado do executor) não mexem no
+    # cooldown existente — não é nem confirmação de ALLOW nem uma negação
+    # de governança nova, então não deve nem limpar nem estender o cooldown.
+
+    return res, False
 
 
 def monitor_loop(stop_event: threading.Event):
@@ -170,7 +237,12 @@ def monitor_loop(stop_event: threading.Event):
                     # isolamento confirmado — _feed_blocked_ips só é
                     # atualizado em EXECUTED, de propósito (evita marcar
                     # "já tratado" um IP que a governança bloqueou/adiou).
-                    res = _monitor_auto_isolate(ip, reason, "threat_feed", feeds=feed_matches)
+                    # CP-SD Fase 6Q: `suppressed=True` significa que nenhum
+                    # control_plane_decision novo foi gravado (resposta veio
+                    # do cooldown local) — o log_event abaixo também não
+                    # deve repetir a cada ciclo suprimido, senão só troca
+                    # um tipo de ruído por outro.
+                    res, suppressed = _monitor_auto_isolate(ip, reason, "threat_feed", feeds=feed_matches)
                     if res.status is cp.ActionStatus.EXECUTED:
                         _feed_blocked_ips.add(ip)
                         _announce(f"BLOQUEIO PROATIVO (threat feed): {res.output} ({reason})")
@@ -178,7 +250,7 @@ def monitor_loop(stop_event: threading.Event):
                             "Nexus: IP isolado proativamente (threat feed)",
                             f"{ip} — {reason}\n{res.output}",
                         )
-                    else:
+                    elif not suppressed:
                         log_event(
                             "monitor_auto_isolate_not_executed", ip,
                             f"source=threat_feed status={res.status.value} {res.output}",
@@ -226,7 +298,13 @@ def monitor_loop(stop_event: threading.Event):
                 # acima — bloqueio real e a narração ao agente (que afirma
                 # "acabei de isolar", um fato consumado) só acontecem em
                 # EXECUTED, para não mascarar DENY/DRY_RUN_ONLY como sucesso.
-                res = _monitor_auto_isolate(ip, reason, "ddos_severe", count=counts[ip])
+                # CP-SD Fase 6Q: mesmo cooldown local do caminho threat feed
+                # (chave (ip, "ddos_severe") — não compartilha estado com o
+                # caminho threat_feed do mesmo IP). Complementa, sem
+                # substituir, o amortecedor pré-existente de
+                # ALERT_COOLDOWN_SECONDS/_last_alerted que já limita a
+                # cadência de due_severe.
+                res, suppressed = _monitor_auto_isolate(ip, reason, "ddos_severe", count=counts[ip])
                 if res.status is cp.ActionStatus.EXECUTED:
                     _announce(f"AÇÃO AUTOMÁTICA: {res.output} ({reason})")
                     send_notification("Nexus: IP isolado automaticamente", f"{ip} — {reason}\n{res.output}")
@@ -244,7 +322,7 @@ def monitor_loop(stop_event: threading.Event):
                         " Confirme que está registrado e me explique resumidamente o que foi feito.",
                         principal=rbac.SERVICE_MONITOR_PRINCIPAL,
                     )
-                else:
+                elif not suppressed:
                     log_event(
                         "monitor_auto_isolate_not_executed", ip,
                         f"source=ddos_severe status={res.status.value} {res.output}",
