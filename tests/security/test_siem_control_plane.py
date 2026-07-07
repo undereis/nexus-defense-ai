@@ -271,14 +271,18 @@ def test_human_roles_unchanged_by_this_phase():
     assert rbac.ROLE_PERMISSIONS["readonly"] == {"read"}
 
 
-def test_service_role_full_permission_set_after_phase_6h():
-    assert rbac.ROLE_PERMISSIONS["service"] == {
+def test_service_role_permissions_after_phase_6h_are_subset():
+    """CP-SD Fase 6M (posterior a esta) acrescentou mais 1 permissão
+    ("threat_feed.refresh_lists") — a checagem do papel "service" é por
+    SUBCONJUNTO (não "=="): o conjunto EXATO e atualizado vive em
+    tests/security/test_threat_feed_lists_control_plane.py::test_service_role_full_permission_set_after_phase_6m."""
+    assert {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
         "noc.block_subscriber", "noc.unblock_subscriber",
         "billing.run_cycle.trigger",
         "siem.forward_events",
-    }
+    }.issubset(rbac.ROLE_PERMISSIONS["service"])
 
 
 # ------------------------- 14: ActionSpec siem.forward_events -------------------------
