@@ -83,12 +83,18 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # ESPECÍFICA, sem wildcard "siem.*"; nenhum papel humano ganhou acesso
     # SIEM nesta fase (nem "auditor", que tem "audit" — string distinta, sem
     # correspondência por prefixo/wildcard).
+    # CP-SD Fase 6M acrescenta "threat_feed.refresh_lists" — a atualização
+    # das listas públicas de threat feed (tools/threat_feed_lists.py:
+    # refresh_all_feeds). Permissão ESPECÍFICA, sem wildcard
+    # "threat_feed.*"/"threat_feeds.*"/"reputation.*"; nenhum papel humano
+    # ganhou acesso nesta fase.
     "service": {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
         "noc.block_subscriber", "noc.unblock_subscriber",
         "billing.run_cycle.trigger",
         "siem.forward_events",
+        "threat_feed.refresh_lists",
     },
 }
 
@@ -175,3 +181,9 @@ SERVICE_HONEYTOKEN_PRINCIPAL = service_principal("honeytoken")
 SERVICE_ABUSEIPDB_REPORTER_PRINCIPAL = service_principal("abuseipdb-reporter")
 SERVICE_WATCHDOG_PRINCIPAL = service_principal("watchdog")
 SERVICE_SIEM_PRINCIPAL = service_principal("siem")
+# CP-SD Fase 6M — hífen ("threat-feed"), não underscore, seguindo a mesma
+# convenção já usada em nomes compostos ("proactive-audit",
+# "abuseipdb-reporter"). Dedicado à ATUALIZAÇÃO de listas públicas
+# (tools/threat_feed_lists.py) — distinto de SERVICE_ABUSEIPDB_REPORTER_PRINCIPAL,
+# que é para o REPORTE de IP ao AbuseIPDB (ação diferente, módulo diferente).
+SERVICE_THREAT_FEED_PRINCIPAL = service_principal("threat-feed")

@@ -126,6 +126,17 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     # uma ação ofensiva nem infraestrutura crítica própria; MEDIUM não força
     # aprovação sozinho — não pode travar o loop automático a cada 60s.
     "siem.forward_events": ActionSpec("siem.forward_events", True, ActionRisk.MEDIUM),
+    # CP-SD Fase 6M — atualização das listas públicas de threat feed
+    # (tools/threat_feed_lists.py:refresh_all_feeds — Spamhaus DROP/Feodo
+    # Tracker/Emerging Threats). changes_state=True DELIBERADO: não é
+    # leitura neutra — a tabela local que isto substitui
+    # (threat_feed_entries) alimenta o auto-bloqueio de firewall dentro de
+    # monitor_loop (achado da Fase 6L); em lab/replay não deve baixar dado
+    # real nem substituir o cache. MEDIUM (não LOW): um feed
+    # malicioso/hijackado poderia contaminar decisões automáticas a
+    # jusante; não HIGH/CRITICAL porque a própria função não toca
+    # firewall/Mikrotik/credencial — só baixa texto público sem chave.
+    "threat_feed.refresh_lists": ActionSpec("threat_feed.refresh_lists", True, ActionRisk.MEDIUM),
 }
 
 # Ação desconhecida: conservadora, mas compatível (não exige permissão própria).

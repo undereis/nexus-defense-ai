@@ -13,12 +13,30 @@ contra qualquer IP que conectar:
   recentemente em honeypots e sensores da comunidade.
 
 Todas são públicas e gratuitas, sem necessidade de chave/conta.
+
+CP-SD Fase 6M: `refresh_all_feeds()` (o disparo real — rede + substituição
+do cache local `threat_feed_entries`) passa por `cp.request_action`
+(action_type "threat_feed.refresh_lists", changes_state=True) — RBAC nega
+sem tocar rede; lab/replay vira DRY_RUN_ONLY (nunca chama requests.get,
+nunca substitui o cache). Isso protege os dois call-sites que hoje chamam
+`refresh_all_feeds()` direto (o loop `threat_feed_refresh_loop` em main.py
+e a tool do agente `refresh_threat_feed_lists`) sem precisar editar nenhum
+dos dois — o boundary fica dentro desta função, mesmo padrão já validado em
+`tools/billing.py` (Fase 6D/6F) e `tools/siem.py` (Fase 6H). `refresh_feed`
+(uma fonte só) e `check_ip_against_feeds`/`describe_ip_feed_check` (leitura
+pura do cache já baixado) NÃO são gateados nesta fase — não são os
+call-sites de bypass identificados na Fase 6L. Esta fase NÃO fecha o
+bypass de `monitor_loop`'s `firewall.block_ip` direto (que CONSOME este
+cache) — isso fica para uma fase própria.
 """
 
 import ipaddress
+from contextlib import nullcontext
 
 import requests
 
+from core import control_plane as cp
+from core import rbac
 from database.db import (
     count_feed_entries_by_source,
     get_all_feed_entries,
@@ -68,11 +86,56 @@ def refresh_feed(source: str) -> str:
     return f"Feed {source} atualizado: {len(entries)} entrada(s)."
 
 
-def refresh_all_feeds() -> str:
-    """Atualiza todas as fontes configuradas, uma por uma — uma fonte
-    falhando não impede as outras de atualizar."""
+def _refresh_all_feeds_impl() -> str:
+    """Implementação real: baixa as 3 fontes e substitui o cache local, uma
+    por uma — uma fonte falhando não impede as outras de atualizar. Só deve
+    ser chamada como executor de `cp.request_action` (caminho ALLOW)."""
     results = [refresh_feed(source) for source in FEED_URLS]
     return "\n".join(results)
+
+
+def _threat_feed_principal_context():
+    """Identidade a usar na chamada ao Control Plane do refresh real.
+
+    NUNCA sobrescreve um Principal real já propagado no contexto (chat/API/
+    Slack/Telegram) — só assume SERVICE_THREAT_FEED_PRINCIPAL quando
+    NINGUÉM setou Principal (caso do `threat_feed_refresh_loop` automático,
+    que não tem identidade própria). Mesma lição da CP-SD Fase 6D
+    (tools/billing.py) e Fase 6H (tools/siem.py): sobrescrever
+    incondicionalmente seria elevação de privilégio."""
+    if cp.get_current_principal() is not None:
+        return nullcontext()
+    return cp.principal_context(rbac.SERVICE_THREAT_FEED_PRINCIPAL)
+
+
+def refresh_all_feeds() -> str:
+    """Atualiza todas as fontes configuradas, uma por uma — uma fonte
+    falhando não impede as outras de atualizar.
+
+    CP-SD Fase 6M: o refresh real (rede + substituição do cache local)
+    passa pelo Control Plane — RBAC nega sem tocar rede; lab/replay vira
+    DRY_RUN_ONLY (nunca chama requests.get, nunca substitui
+    threat_feed_entries)."""
+    def _do_refresh(feed_count: int, sources: list[str]) -> str:
+        return _refresh_all_feeds_impl()
+
+    with _threat_feed_principal_context():
+        req = cp.make_request(
+            "threat_feed.refresh_lists", target="threat_feed_lists",
+            params={"feed_count": len(FEED_URLS), "sources": sorted(FEED_URLS)},
+        )
+        res = cp.request_action(req, executor=_do_refresh, tool_name="cp_threat_feed_refresh_lists")
+
+    if res.status is cp.ActionStatus.DENIED:
+        return f"Atualização de feeds NEGADA pela governança: {res.output}"
+
+    if res.status is cp.ActionStatus.DRY_RUN:
+        return f"[DRY-RUN] Atualização de feeds não realizada ({res.output})"
+
+    if res.status is cp.ActionStatus.FAILED:
+        return f"Atualização de feeds falhou: {res.output}"
+
+    return res.output
 
 
 def describe_feed_status() -> str:

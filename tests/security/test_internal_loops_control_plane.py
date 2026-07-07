@@ -314,14 +314,20 @@ def test_reconcile_loop_check_and_reconcile_still_direct_not_wrapped_by_cp():
 
 
 def test_no_new_service_principal_constant_introduced():
-    """Esta fase só concede permissões ao papel "service" — nenhum novo
-    Principal constante deveria ter sido criado em core/rbac.py."""
+    """Esta fase (6B) só concede permissões ao papel "service" — nenhum
+    novo Principal constante deveria ter sido criado em core/rbac.py NESTA
+    fase. CP-SD Fase 6M (posterior) criou deliberadamente 1 Principal novo
+    (SERVICE_THREAT_FEED_PRINCIPAL, ver test_threat_feed_lists_control_plane.py)
+    — o conjunto abaixo foi atualizado para refletir o estado atual; o
+    espírito do teste (nenhum Principal SEM PROPÓSITO/RASTREADO) continua
+    valendo."""
     known = {
         rbac.SERVICE_MONITOR_PRINCIPAL, rbac.SERVICE_PROACTIVE_AUDIT_PRINCIPAL,
         rbac.SERVICE_RECONCILE_PRINCIPAL, rbac.SERVICE_BILLING_PRINCIPAL,
         rbac.SERVICE_PLAYBOOK_PRINCIPAL, rbac.SERVICE_HONEYPOT_PRINCIPAL,
         rbac.SERVICE_HONEYTOKEN_PRINCIPAL, rbac.SERVICE_ABUSEIPDB_REPORTER_PRINCIPAL,
         rbac.SERVICE_WATCHDOG_PRINCIPAL, rbac.SERVICE_SIEM_PRINCIPAL,
+        rbac.SERVICE_THREAT_FEED_PRINCIPAL,
     }
     all_names = {
         name for name in dir(rbac) if name.startswith("SERVICE_") and name.endswith("_PRINCIPAL")
@@ -332,8 +338,9 @@ def test_no_new_service_principal_constant_introduced():
         "SERVICE_PLAYBOOK_PRINCIPAL", "SERVICE_HONEYPOT_PRINCIPAL",
         "SERVICE_HONEYTOKEN_PRINCIPAL", "SERVICE_ABUSEIPDB_REPORTER_PRINCIPAL",
         "SERVICE_WATCHDOG_PRINCIPAL", "SERVICE_SIEM_PRINCIPAL",
+        "SERVICE_THREAT_FEED_PRINCIPAL",
     }
-    assert len(known) == 10
+    assert len(known) == 11
 
 
 # ------------------------- RBAC: service não virou admin, não recebeu "*" -------------------------
