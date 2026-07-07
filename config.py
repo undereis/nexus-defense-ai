@@ -400,3 +400,12 @@ SIEM_TOKEN = _secret("SIEM_TOKEN", "")
 SIEM_INDEX = os.getenv("SIEM_INDEX", "nexus-events")
 SIEM_BATCH = int(os.getenv("SIEM_BATCH", "500"))
 SIEM_FORWARD_INTERVAL = int(os.getenv("SIEM_FORWARD_INTERVAL", "60"))
+# CP-SD Fase 6K: intervalo mínimo (segundos) entre reavaliações de
+# "siem.forward_events" pelo Control Plane quando a última decisão foi
+# DENY/DRY_RUN_ONLY e o estado (modo operacional + actor + role) não mudou —
+# evita reauditar a MESMA decisão a cada SIEM_FORWARD_INTERVAL, o que gravaria
+# um `control_plane_decision` novo por ciclo indefinidamente (achado da Fase
+# 6I/6J: cursor preso + auditoria da própria tentativa nunca sai da fila).
+# 1800s (30min) reduz o ruído em ~48x frente ao intervalo padrão de 60s,
+# mantendo um heartbeat de auditoria periódico (nunca cooldown infinito).
+SIEM_REAUDIT_COOLDOWN_SECONDS = int(os.getenv("SIEM_REAUDIT_COOLDOWN_SECONDS", "1800"))

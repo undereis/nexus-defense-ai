@@ -612,6 +612,20 @@ def init_db():
             conn.execute("ALTER TABLE pending_actions ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0")
         except sqlite3.OperationalError:
             pass  # coluna já existe
+        # CP-SD Fase 6K: bookkeeping de cooldown de reavaliação SIEM (não faz
+        # parte da hash chain — `siem_state` nunca teve prev_hash/entry_hash).
+        for column in (
+            "last_blocked_action_type TEXT",
+            "last_blocked_decision TEXT",
+            "last_blocked_mode TEXT",
+            "last_blocked_actor TEXT",
+            "last_blocked_role TEXT",
+            "last_blocked_at TEXT",
+        ):
+            try:
+                conn.execute(f"ALTER TABLE siem_state ADD COLUMN {column}")
+            except sqlite3.OperationalError:
+                pass  # coluna já existe
 
 
 def _compute_entry_hash(prev_hash: str, timestamp: str, event_type: str,
@@ -678,6 +692,60 @@ def set_siem_cursor(last_event_id: int) -> None:
             "ON CONFLICT(id) DO UPDATE SET last_event_id = excluded.last_event_id, "
             "updated_at = datetime('now')",
             (last_event_id,),
+        )
+
+
+def get_siem_blocked_state() -> dict | None:
+    """Estado da ÚLTIMA decisão DENY/DRY_RUN_ONLY de `siem.forward_events`
+    (CP-SD Fase 6K) — usado por `tools/siem.py` para decidir se pode pular
+    reavaliação dentro do cooldown. `None` = nenhum bloqueio registrado (ou
+    já foi limpo por um ALLOW). Não faz parte da hash chain."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT last_blocked_action_type, last_blocked_decision, last_blocked_mode, "
+            "last_blocked_actor, last_blocked_role, last_blocked_at "
+            "FROM siem_state WHERE id = 1"
+        ).fetchone()
+    if not row or row[5] is None:
+        return None
+    return {
+        "action_type": row[0], "decision": row[1], "mode": row[2],
+        "actor": row[3], "role": row[4], "blocked_at": row[5],
+    }
+
+
+def set_siem_blocked_state(action_type: str, decision: str, mode: str, actor: str,
+                            role: str, blocked_at: str) -> None:
+    """Registra que a última tentativa de `siem.forward_events` foi negada
+    (DENY) ou virou DRY_RUN_ONLY, com a identidade/modo daquele momento —
+    NUNCA mexe em `last_event_id` (cursor) nem em `events`."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO siem_state (id, last_event_id, last_blocked_action_type, "
+            "last_blocked_decision, last_blocked_mode, last_blocked_actor, "
+            "last_blocked_role, last_blocked_at, updated_at) "
+            "VALUES (1, 0, ?, ?, ?, ?, ?, ?, datetime('now')) "
+            "ON CONFLICT(id) DO UPDATE SET "
+            "last_blocked_action_type = excluded.last_blocked_action_type, "
+            "last_blocked_decision = excluded.last_blocked_decision, "
+            "last_blocked_mode = excluded.last_blocked_mode, "
+            "last_blocked_actor = excluded.last_blocked_actor, "
+            "last_blocked_role = excluded.last_blocked_role, "
+            "last_blocked_at = excluded.last_blocked_at, "
+            "updated_at = datetime('now')",
+            (action_type, decision, mode, actor, role, blocked_at),
+        )
+
+
+def clear_siem_blocked_state() -> None:
+    """Limpa o bookkeeping de bloqueio (chamado quando `siem.forward_events`
+    volta a ALLOW) — não afeta o cursor (`last_event_id`)."""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE siem_state SET last_blocked_action_type = NULL, "
+            "last_blocked_decision = NULL, last_blocked_mode = NULL, "
+            "last_blocked_actor = NULL, last_blocked_role = NULL, "
+            "last_blocked_at = NULL, updated_at = datetime('now') WHERE id = 1"
         )
 
 
