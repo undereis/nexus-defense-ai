@@ -237,33 +237,39 @@ def test_human_roles_unchanged_by_this_phase():
     assert rbac.ROLE_PERMISSIONS["readonly"] == {"read"}
 
 
-def test_service_role_full_permission_set_after_phase_6m():
-    """Conjunto EXATO e atual de 'service' — autoritativo a partir da Fase
-    6M. Testes de fases anteriores (6H/6K) que afirmavam um conjunto exato
-    foram convertidos para subconjunto (obsolescência esperada, mesmo
-    padrão repetido em toda fase que acrescenta permissão a 'service')."""
-    assert rbac.ROLE_PERMISSIONS["service"] == {
+def test_service_role_permissions_after_phase_6m_are_subset():
+    """CP-SD Fase 6O (posterior a esta) acrescentou mais 1 permissão
+    ("monitor.auto_isolate") — a checagem do papel "service" é por
+    SUBCONJUNTO (não "=="): o conjunto EXATO e atualizado vive em
+    tests/security/test_monitor_loop_control_plane.py::test_service_role_full_permission_set_after_phase_6o."""
+    assert {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
         "noc.block_subscriber", "noc.unblock_subscriber",
         "billing.run_cycle.trigger",
         "siem.forward_events",
         "threat_feed.refresh_lists",
-    }
+    }.issubset(rbac.ROLE_PERMISSIONS["service"])
 
 
-# ------------------------- 16: gatear o refresh NÃO fecha o bypass do monitor_loop -------------------------
+# ------------------------- 16: gatear o refresh NÃO fecha o bypass do monitor_loop (histórico) -------------------------
 
-def test_monitor_loop_firewall_block_ip_still_direct_and_unpatched():
-    """Teste estático/documentado (não altera main.py): prova que
-    monitor_loop continua chamando firewall.block_ip DIRETO, consumindo o
-    cache que refresh_all_feeds atualiza — a Fase 6M gateia só a
-    ATUALIZAÇÃO do cache, não o CONSUMO dele. Fecha esse bypass fica para
-    uma fase própria (ver docs/SESSION-HANDOFF.md)."""
+def test_monitor_loop_firewall_block_ip_now_routed_through_cp_since_phase_6o():
+    """Até a Fase 6M, este teste provava que monitor_loop chamava
+    firewall.block_ip DIRETO (a Fase 6M gateou só a ATUALIZAÇÃO do cache de
+    threat feed, não o CONSUMO dele em monitor_loop — achado da Fase 6N).
+    CP-SD Fase 6O fechou esse bypass: monitor_loop não chama mais
+    firewall.block_ip diretamente — delega a _monitor_auto_isolate, que
+    passa pelo Control Plane (action_type "monitor.auto_isolate") antes de
+    qualquer bloqueio real. Ver tests/security/test_monitor_loop_control_plane.py
+    para a cobertura completa desta fase."""
     import main as main_module
 
-    source = inspect.getsource(main_module.monitor_loop)
-    assert "check_ip_against_feeds" in source
-    assert "firewall.block_ip(ip, reason)" in source
-    assert "cp.request_action" not in source
-    assert "principal_context" not in source
+    monitor_source = inspect.getsource(main_module.monitor_loop)
+    assert "check_ip_against_feeds" in monitor_source
+    assert "firewall.block_ip(ip, reason)" not in monitor_source
+    assert "_monitor_auto_isolate(" in monitor_source
+
+    helper_source = inspect.getsource(main_module._monitor_auto_isolate)
+    assert "cp.request_action" in helper_source
+    assert "firewall.block_ip(ip, reason)" in helper_source

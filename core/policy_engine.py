@@ -137,6 +137,25 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     # jusante; não HIGH/CRITICAL porque a própria função não toca
     # firewall/Mikrotik/credencial — só baixa texto público sem chave.
     "threat_feed.refresh_lists": ActionSpec("threat_feed.refresh_lists", True, ActionRisk.MEDIUM),
+    # CP-SD Fase 6O — auto-isolamento do monitor_loop (main.py): as duas
+    # chamadas diretas a firewall.block_ip (bloqueio proativo por threat
+    # feed E auto-isolamento por DDoS/volume severo) passam por este MESMO
+    # action_type, diferenciadas por params["source"] ("threat_feed" ou
+    # "ddos_severe") — a decisão de governança (RBAC/modo/infra crítica) é
+    # idêntica nos dois casos, só o motivo de detecção difere. NÃO reaproveita
+    # "block_ip"/"defense.block_ip" DE PROPÓSITO (achado da Fase 6N): dar
+    # "defense.block_ip" ao papel "service" ampliaria a capacidade de
+    # bloquear QUALQUER IP para TODOS os ~11 Service Principals existentes
+    # (billing/siem/threat-feed/watchdog/etc.), já que todos compartilham o
+    # MESMO papel RBAC "service" — permissão específica evita essa
+    # amplificação. changes_state=True: mutação real de firewall; em
+    # lab/replay vira DRY_RUN_ONLY ANTES de firewall.block_ip ser chamado
+    # (defesa em profundidade em cima do cinto de modo que tools/firewall.py
+    # já tem desde a Fase 1B). MEDIUM (mesmo nível de "block_ip"/"isolate_ip");
+    # requires_approval=False DELIBERADO — esse caminho existe justamente
+    # para isolar em tempo real, sem esperar confirmação humana nem round-trip
+    # de LLM (documentado nos próprios comentários de monitor_loop).
+    "monitor.auto_isolate": ActionSpec("monitor.auto_isolate", True, ActionRisk.MEDIUM),
 }
 
 # Ação desconhecida: conservadora, mas compatível (não exige permissão própria).
