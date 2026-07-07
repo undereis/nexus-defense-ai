@@ -88,6 +88,13 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # refresh_all_feeds). Permissão ESPECÍFICA, sem wildcard
     # "threat_feed.*"/"threat_feeds.*"/"reputation.*"; nenhum papel humano
     # ganhou acesso nesta fase.
+    # CP-SD Fase 6O acrescenta "monitor.auto_isolate" — as duas chamadas de
+    # auto-isolamento diretas dentro de monitor_loop (main.py): bloqueio
+    # proativo por threat feed e auto-isolamento por DDoS/volume severo.
+    # Permissão ESPECÍFICA, DELIBERADAMENTE sem "defense.block_ip" (que
+    # ampliaria a capacidade de bloquear IP a TODOS os Service Principals,
+    # já que compartilham o papel "service") e sem wildcard
+    # "monitor.*"/"*"; nenhum papel humano ganhou acesso nesta fase.
     "service": {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
@@ -95,6 +102,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "billing.run_cycle.trigger",
         "siem.forward_events",
         "threat_feed.refresh_lists",
+        "monitor.auto_isolate",
     },
 }
 

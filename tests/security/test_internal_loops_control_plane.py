@@ -297,12 +297,19 @@ def test_device_monitor_loop_not_touched():
     assert "cp.request_action" not in src and "cp.make_request" not in src
 
 
-def test_monitor_loop_firewall_block_ip_still_direct_not_wrapped_by_cp():
-    """monitor_loop já usa SERVICE_MONITOR_PRINCIPAL no ask_agent (Fase 5D),
-    mas firewall.block_ip continua chamado direto — não migrado nesta fase."""
+def test_monitor_loop_auto_isolate_now_routed_through_cp_since_phase_6o():
+    """Até a Fase 6N, monitor_loop já usava SERVICE_MONITOR_PRINCIPAL no
+    ask_agent (Fase 5D), mas firewall.block_ip continuava chamado direto —
+    não migrado nesta fase (6B). CP-SD Fase 6O fechou esse bypass: o corpo
+    de monitor_loop não chama mais firewall.block_ip nem cp.request_action
+    diretamente — delega a _monitor_auto_isolate (função-irmã em main.py),
+    que faz a chamada real ao Control Plane. Ver
+    tests/security/test_monitor_loop_control_plane.py para a cobertura
+    completa da Fase 6O."""
     src = inspect.getsource(main_module.monitor_loop)
-    assert "firewall.block_ip(" in src
-    assert "cp.request_action" not in src and "cp.make_request" not in src
+    assert "firewall.block_ip(" not in src
+    assert "_monitor_auto_isolate(" in src
+    assert "cp.request_action" not in src and "cp.make_request" not in src  # delega ao helper, não inline
 
 
 def test_reconcile_loop_check_and_reconcile_still_direct_not_wrapped_by_cp():

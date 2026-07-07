@@ -8,6 +8,7 @@ a origem do ataque.
 
 import threading
 import time
+from contextlib import nullcontext
 from datetime import datetime
 
 from agents.nexus_agent import _detector
@@ -88,6 +89,42 @@ def _due_for_alert(ips: list[str], now: float) -> list[str]:
     return [ip for ip in ips if now - _last_alerted.get(ip, 0) >= ALERT_COOLDOWN_SECONDS]
 
 
+def _monitor_principal_context():
+    """CP-SD Fase 6O: mesma regra da Fase 6D/6H/6M — Principal real se já
+    houver um no ContextVar, senão SERVICE_MONITOR_PRINCIPAL. Nunca
+    sobrescreve identidade humana/integrada já propagada (hoje monitor_loop
+    só roda sozinho, sem chamador externo, mas mantém o padrão defensivo do
+    arco por consistência/futuro-proofing)."""
+    if cp.get_current_principal() is not None:
+        return nullcontext()
+    return cp.principal_context(rbac.SERVICE_MONITOR_PRINCIPAL)
+
+
+def _monitor_auto_isolate(ip: str, reason: str, source: str, **extra_params) -> cp.ActionResult:
+    """CP-SD Fase 6O: governa as duas chamadas de auto-isolamento diretas
+    de monitor_loop (bloqueio proativo por threat feed e auto-isolamento por
+    DDoS/volume severo) pelo Control Plane, ANTES de firewall.block_ip ser
+    chamado de verdade — RBAC + trava de infraestrutura crítica (via
+    asset_registry.check_target, alvo = o próprio IP) + cinto de modo
+    (lab/replay -> DRY_RUN_ONLY, nunca chama firewall.block_ip). `source`
+    ("threat_feed" | "ddos_severe") viaja em params só para auditoria/
+    diferenciação — os dois caminhos usam o MESMO action_type
+    "monitor.auto_isolate" (a decisão de governança é idêntica; só o motivo
+    de detecção difere). O executor só roda em ALLOW — record_confirmed_isolation
+    (efeito de "isolamento confirmado") só acontece dentro dele, nunca fora."""
+    def _do_isolate(**_ignored) -> str:
+        result = firewall.block_ip(ip, reason)
+        record_confirmed_isolation(ip, reason)
+        return result
+
+    with _monitor_principal_context():
+        req = cp.make_request(
+            "monitor.auto_isolate", target=ip,
+            params={"source": source, "reason": reason, **extra_params},
+        )
+        return cp.request_action(req, executor=_do_isolate, tool_name="cp_monitor_auto_isolate")
+
+
 def monitor_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
@@ -127,11 +164,25 @@ def monitor_loop(stop_event: threading.Event):
                 if feed_matches:
                     reason = f"IP em feed(s) de threat intel conhecido: {', '.join(feed_matches)}"
                     log_event("threat_feed_match", ip, reason)
-                    result = firewall.block_ip(ip, reason)
-                    record_confirmed_isolation(ip, reason)
-                    _feed_blocked_ips.add(ip)
-                    _announce(f"BLOQUEIO PROATIVO (threat feed): {result} ({reason})")
-                    send_notification("Nexus: IP isolado proativamente (threat feed)", f"{ip} — {reason}\n{result}")
+                    # CP-SD Fase 6O: bloqueio real só acontece dentro do
+                    # executor do Control Plane (ALLOW). DENY/DRY_RUN_ONLY
+                    # nunca chamam firewall.block_ip nem contam como
+                    # isolamento confirmado — _feed_blocked_ips só é
+                    # atualizado em EXECUTED, de propósito (evita marcar
+                    # "já tratado" um IP que a governança bloqueou/adiou).
+                    res = _monitor_auto_isolate(ip, reason, "threat_feed", feeds=feed_matches)
+                    if res.status is cp.ActionStatus.EXECUTED:
+                        _feed_blocked_ips.add(ip)
+                        _announce(f"BLOQUEIO PROATIVO (threat feed): {res.output} ({reason})")
+                        send_notification(
+                            "Nexus: IP isolado proativamente (threat feed)",
+                            f"{ip} — {reason}\n{res.output}",
+                        )
+                    else:
+                        log_event(
+                            "monitor_auto_isolate_not_executed", ip,
+                            f"source=threat_feed status={res.status.value} {res.output}",
+                        )
 
             severe, moderate = classify_threats(
                 counts, _detector.threshold, AUTO_ISOLATE_MULTIPLIER
@@ -171,24 +222,33 @@ def monitor_loop(stop_event: threading.Event):
                 )
                 log_event("ddos_severe", ip, reason)
                 record_threat_flag(ip)
-                result = firewall.block_ip(ip, reason)
-                record_confirmed_isolation(ip, reason)
-                _announce(f"AÇÃO AUTOMÁTICA: {result} ({reason})")
-                send_notification("Nexus: IP isolado automaticamente", f"{ip} — {reason}\n{result}")
+                # CP-SD Fase 6O: mesmo boundary do bloqueio por threat feed
+                # acima — bloqueio real e a narração ao agente (que afirma
+                # "acabei de isolar", um fato consumado) só acontecem em
+                # EXECUTED, para não mascarar DENY/DRY_RUN_ONLY como sucesso.
+                res = _monitor_auto_isolate(ip, reason, "ddos_severe", count=counts[ip])
+                if res.status is cp.ActionStatus.EXECUTED:
+                    _announce(f"AÇÃO AUTOMÁTICA: {res.output} ({reason})")
+                    send_notification("Nexus: IP isolado automaticamente", f"{ip} — {reason}\n{res.output}")
 
-                prior_findings = get_findings_for_host(ip, limit=3)
-                findings_note = (
-                    f" Já existem {len(prior_findings)} auditoria(s) de segurança prévia(s) "
-                    f"registrada(s) para esse IP — use correlate_threat para checar."
-                    if prior_findings
-                    else ""
-                )
-                ask_agent(
-                    f"AVISO: acabei de isolar automaticamente o IP {ip} ({reason}), "
-                    "pois estava muito acima do limite configurado." + findings_note +
-                    " Confirme que está registrado e me explique resumidamente o que foi feito.",
-                    principal=rbac.SERVICE_MONITOR_PRINCIPAL,
-                )
+                    prior_findings = get_findings_for_host(ip, limit=3)
+                    findings_note = (
+                        f" Já existem {len(prior_findings)} auditoria(s) de segurança prévia(s) "
+                        f"registrada(s) para esse IP — use correlate_threat para checar."
+                        if prior_findings
+                        else ""
+                    )
+                    ask_agent(
+                        f"AVISO: acabei de isolar automaticamente o IP {ip} ({reason}), "
+                        "pois estava muito acima do limite configurado." + findings_note +
+                        " Confirme que está registrado e me explique resumidamente o que foi feito.",
+                        principal=rbac.SERVICE_MONITOR_PRINCIPAL,
+                    )
+                else:
+                    log_event(
+                        "monitor_auto_isolate_not_executed", ip,
+                        f"source=ddos_severe status={res.status.value} {res.output}",
+                    )
 
             # Caminho normal: ameaça moderada continua sendo avaliada pelo agente.
             if due_moderate:
