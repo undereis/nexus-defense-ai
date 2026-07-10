@@ -11,6 +11,7 @@ infraestrutura (ex: Kubernetes), aplicado ao firewall.
 
 from dataclasses import dataclass
 
+from core import control_plane as cp
 from database.db import list_blocked_ips
 from tools import firewall
 
@@ -28,6 +29,32 @@ class ReconcileResult:
         return bool(self.missing or self.extra)
 
 
+def _reconcile_reapply(ip: str) -> cp.ActionResult:
+    """CP-SD Fase 6R (endurecimento): a reaplicação de um bloqueio que sumiu do
+    firewall (drift) passa pelo Control Plane, SEM fallback de identidade. Esta
+    função NÃO instala Principal — EXIGE que o entrypoint automático confiável
+    (reconcile_loop em main.py) já tenha instalado SERVICE_RECONCILE_PRINCIPAL.
+    Sem contexto autenticado, a policy nega (allowed_actors) e nada é reaplicado.
+
+    CONSEQUÊNCIA DOCUMENTADA: a tool humana `check_firewall_integrity` também
+    chama check_and_reconcile, mas sob a identidade do humano — a DETECÇÃO de
+    drift continua (read-only), porém a REAPLICAÇÃO é NEGADA (vai para
+    reapply_errors com a razão do Control Plane). O humano vê o drift relatado,
+    mas o conserto automático fica reservado ao loop de serviço. Defesa em
+    profundidade: a trava dura de asset_registry.check_target barra infra
+    própria crítica mesmo em ALLOW. firewall.block_ip só roda em ALLOW."""
+    reason = "Reaplicado por reconciliação (drift detectado)"
+
+    def _do_block(**_ignored) -> str:
+        return firewall.block_ip(ip, reason=reason)
+
+    req = cp.make_request(
+        "reconcile.reapply_block", target=ip,
+        params={"source": "reconcile", "reason": reason},
+    )
+    return cp.request_action(req, executor=_do_block, tool_name="cp_reconcile_reapply")
+
+
 def check_and_reconcile(auto_reapply: bool = True) -> ReconcileResult:
     """Compara banco vs estado real do pf. Se algum IP que deveria estar
     bloqueado não está mais (drift), reaplica automaticamente por padrão."""
@@ -43,11 +70,16 @@ def check_and_reconcile(auto_reapply: bool = True) -> ReconcileResult:
     errors = {}
     if auto_reapply:
         for ip in missing:
-            result = firewall.block_ip(ip, reason="Reaplicado por reconciliação (drift detectado)")
-            if result.startswith("IP") and "sucesso" in result:
+            # CP-SD Fase 6R: reaplicação governada. "reapplied" só conta um IP
+            # que o Control Plane PERMITIU e o firewall confirmou; DENY/
+            # DRY_RUN_ONLY/falha caem em reapply_errors (comportamento honesto,
+            # nunca conta como reaplicado o que não foi).
+            res = _reconcile_reapply(ip)
+            if (res.status is cp.ActionStatus.EXECUTED
+                    and res.output.startswith("IP") and "sucesso" in res.output):
                 reapplied.append(ip)
             else:
-                errors[ip] = result
+                errors[ip] = res.output
 
     return ReconcileResult(
         checked=True, missing=missing, extra=extra, reapplied=reapplied, reapply_errors=errors

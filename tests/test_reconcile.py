@@ -35,7 +35,14 @@ def test_detects_and_reapplies_missing_ip(db, monkeypatch):
         "tools.reconcile.firewall.block_ip", lambda ip, reason: f"IP {ip} isolado/bloqueado com sucesso."
     )
 
-    result = reconcile.check_and_reconcile(auto_reapply=True)
+    # CP-SD Fase 6R (endurecimento): a reaplicação só é autorizada sob a
+    # identidade de serviço instalada pelo entrypoint automático (reconcile_loop).
+    # Simulamos esse contexto — sem ele o Control Plane nega e vai para
+    # reapply_errors (ver test_defense_subsystems_control_plane.py).
+    from core import control_plane as cp
+    from core import rbac
+    with cp.principal_context(rbac.SERVICE_RECONCILE_PRINCIPAL):
+        result = reconcile.check_and_reconcile(auto_reapply=True)
     assert result.has_drift is True
     assert result.missing == ["2.2.2.2"]
     assert result.reapplied == ["2.2.2.2"]
@@ -84,7 +91,13 @@ def test_reapply_failure_is_reported(db, monkeypatch):
         "tools.reconcile.firewall.block_ip", lambda ip, reason: "Falha ao bloquear: erro de teste"
     )
 
-    result = reconcile.check_and_reconcile(auto_reapply=True)
+    # Contexto de serviço (entrypoint) para o executor de fato rodar e o
+    # block_ip mockado devolver a falha — testando o caminho de FALHA de
+    # bloqueio, não o de negação por identidade.
+    from core import control_plane as cp
+    from core import rbac
+    with cp.principal_context(rbac.SERVICE_RECONCILE_PRINCIPAL):
+        result = reconcile.check_and_reconcile(auto_reapply=True)
     assert result.reapplied == []
     assert "4.4.4.4" in result.reapply_errors
     description = reconcile.describe(result)

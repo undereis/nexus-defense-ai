@@ -348,10 +348,12 @@ def test_human_roles_unchanged_by_this_phase():
 
 
 def test_service_role_full_permission_set_after_phase_6o():
-    """Conjunto EXATO e atual de 'service' — autoritativo a partir da Fase
-    6O. Testes de fases anteriores que afirmavam um conjunto exato foram
-    convertidos para subconjunto (mesmo padrão repetido em toda fase que
-    acrescenta permissão a 'service')."""
+    """Conjunto EXATO e atual de 'service' — autoritativo a partir da Fase 6O.
+    A CP-SD Fase 6R NÃO alterou este conjunto DE PROPÓSITO: os 4 auto-isolamentos
+    de subsistema que ela governa são gated por PRINCIPAL (allowed_actors na
+    ActionSpec), não por permissão de papel — justamente para não vazar a
+    capacidade a todos os Service Principals via role="service". Ver
+    tests/security/test_defense_subsystems_control_plane.py."""
     assert rbac.ROLE_PERMISSIONS["service"] == {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",

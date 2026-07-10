@@ -130,7 +130,16 @@ def test_auto_level_2_throttles_and_blocks(pb, monkeypatch):
                         lambda ip, **kw: blocked.append(ip) or "blocked")
     monkeypatch.setattr(playbook, "record_confirmed_isolation", lambda *a, **kw: None)
 
-    playbook.evaluate_and_respond("1.2.3.4", "honeypot_trap")
+    # CP-SD Fase 6R (endurecimento): o isolamento de nível 2 só executa sob a
+    # identidade de serviço autenticada — instalamos service:playbook aqui para
+    # exercitar a LÓGICA de nível 2 (throttle + block) sob autorização. Na
+    # chamada humana real (sem esse contexto) o bloqueio é NEGADO — coberto em
+    # test_defense_subsystems_control_plane.py::
+    # test_playbook_human_call_throttles_but_isolation_denied.
+    from core import control_plane as cp
+    from core import rbac
+    with cp.principal_context(rbac.SERVICE_PLAYBOOK_PRINCIPAL):
+        playbook.evaluate_and_respond("1.2.3.4", "honeypot_trap")
     assert throttled == ["1.2.3.4"]
     assert blocked == ["1.2.3.4"]
 

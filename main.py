@@ -375,7 +375,14 @@ def proactive_audit_loop(stop_event: threading.Event):
 def reconcile_loop(stop_event: threading.Event):
     while not stop_event.is_set():
         try:
-            result = check_and_reconcile(auto_reapply=True)
+            # CP-SD Fase 6R (endurecimento): reconcile_loop é o ÚNICO entrypoint
+            # automático confiável da reconciliação — instala SERVICE_RECONCILE
+            # explicitamente antes de check_and_reconcile. A reaplicação de drift
+            # (governada, action_type reconcile.reapply_block) só é autorizada
+            # sob esta identidade; a tool humana check_firewall_integrity roda
+            # sob a identidade do humano e tem a reaplicação negada (só relata).
+            with cp.principal_context(rbac.SERVICE_RECONCILE_PRINCIPAL):
+                result = check_and_reconcile(auto_reapply=True)
             if result.has_drift:
                 description = describe(result)
                 log_event("firewall_drift", None, description)

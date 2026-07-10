@@ -312,12 +312,30 @@ def test_monitor_loop_auto_isolate_now_routed_through_cp_since_phase_6o():
     assert "cp.request_action" not in src and "cp.make_request" not in src  # delega ao helper, não inline
 
 
-def test_reconcile_loop_check_and_reconcile_still_direct_not_wrapped_by_cp():
-    """reconcile_loop já usa SERVICE_RECONCILE_PRINCIPAL no ask_agent (Fase 5B),
-    mas check_and_reconcile(auto_reapply=True) continua chamado direto."""
-    src = inspect.getsource(main_module.reconcile_loop)
-    assert "check_and_reconcile(auto_reapply=True)" in src
-    assert "cp.request_action" not in src and "cp.make_request" not in src
+def test_reconcile_reapply_now_routed_through_cp_since_phase_6r():
+    """Até a Fase 6Q, a reaplicação de bloqueios (drift) chamava
+    firewall.block_ip DIRETO dentro de tools/reconcile.check_and_reconcile —
+    bypass do Control Plane. CP-SD Fase 6R fechou esse bypass: check_and_reconcile
+    delega a _reconcile_reapply, que passa pelo Control Plane
+    (action_type "reconcile.reapply_block") antes de qualquer firewall.block_ip.
+
+    reconcile_loop (main.py) permanece INALTERADO — ele só chama
+    check_and_reconcile(auto_reapply=True); a governança vive DENTRO da função,
+    não no loop. Ver tests/security/test_defense_subsystems_control_plane.py
+    para a cobertura completa desta fase."""
+    from tools import reconcile as reconcile_module
+
+    loop_src = inspect.getsource(main_module.reconcile_loop)
+    assert "check_and_reconcile(auto_reapply=True)" in loop_src
+    assert "cp.request_action" not in loop_src and "cp.make_request" not in loop_src
+
+    fn_src = inspect.getsource(reconcile_module.check_and_reconcile)
+    assert "firewall.block_ip(" not in fn_src  # não chama a primitiva direto
+    assert "_reconcile_reapply(" in fn_src
+
+    helper_src = inspect.getsource(reconcile_module._reconcile_reapply)
+    assert "cp.request_action" in helper_src
+    assert "reconcile.reapply_block" in helper_src
 
 
 def test_no_new_service_principal_constant_introduced():

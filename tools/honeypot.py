@@ -46,6 +46,8 @@ import threading
 from urllib.parse import parse_qs
 
 from config import HONEYPOT_BANNER, HONEYPOT_PORT
+from core import control_plane as cp
+from core import rbac
 from database.db import (
     count_honeypot_hits,
     list_honeypot_credentials,
@@ -88,18 +90,46 @@ def _is_safe_to_isolate(ip: str) -> bool:
 
 
 def _isolate(ip: str, port: int, service: str):
+    # CP-SD Fase 6R (endurecimento): governado pelo Control Plane, SEM
+    # fallback de identidade. Esta função NÃO instala Principal — ela EXIGE que
+    # o entrypoint confiável (o listener _handle_connection) já tenha instalado
+    # SERVICE_HONEYPOT_PRINCIPAL no contexto. Sem contexto autenticado, a policy
+    # nega (allowed_actors exige o Principal do contexto) e nada é bloqueado.
+    #
+    # Guard local mantido ANTES do Control Plane (defesa em profundidade e
+    # invariante do CLAUDE.md): loopback/infra crítica nunca chega sequer a
+    # montar um ActionRequest. A trava dura de asset_registry.check_target
+    # dentro do CP é uma segunda barreira independente.
     if not _is_safe_to_isolate(ip):
         log_event(
             "honeypot_isolation_skipped", ip, "IP de loopback — nunca isolado", action_taken="ignorado"
         )
         return
     reason = f"Honeypot ({service}): conectou na porta-armadilha {port} (evidência direta de varredura)"
-    result = firewall.block_ip(ip, reason)
-    record_confirmed_isolation(ip, reason)
-    notify.send_notification(
-        "Nexus: honeypot capturou um atacante",
-        f"IP {ip} conectou no honeypot {service} na porta {port}.\n{result}",
+
+    def _do_isolate(**_ignored) -> str:
+        # firewall.block_ip + record_confirmed_isolation SÓ rodam em ALLOW
+        # (dentro do executor). DENY/DRY_RUN_ONLY nunca chegam aqui.
+        out = firewall.block_ip(ip, reason)
+        record_confirmed_isolation(ip, reason)
+        return out
+
+    req = cp.make_request(
+        "honeypot.auto_isolate", target=ip,
+        params={"source": "honeypot", "reason": reason, "port": port, "service": service},
     )
+    res = cp.request_action(req, executor=_do_isolate, tool_name="cp_honeypot_auto_isolate")
+
+    if res.status is cp.ActionStatus.EXECUTED:
+        notify.send_notification(
+            "Nexus: honeypot capturou um atacante",
+            f"IP {ip} conectou no honeypot {service} na porta {port}.\n{res.output}",
+        )
+    else:
+        log_event(
+            "honeypot_isolation_not_executed", ip,
+            f"status={res.status.value} {res.output}", action_taken="não isolado",
+        )
 
 
 def _process_hit(ip: str, port: int, service: str, user_agent: str | None = None):
@@ -430,7 +460,13 @@ def _handle_connection(conn: socket.socket, addr: tuple, port: int, service: str
         user_agent = _HANDLERS[service](conn, ip, port)
     finally:
         try:
-            _process_hit(ip, port, service, user_agent)
+            # CP-SD Fase 6R (endurecimento): o listener é o ÚNICO entrypoint
+            # confiável do serviço de honeypot — só AQUI a identidade
+            # SERVICE_HONEYPOT é instalada, explicitamente, antes de qualquer
+            # caminho governado (isolamento) abaixo. Nenhuma função governada se
+            # autopromove: sem este contexto, o Control Plane nega o bloqueio.
+            with cp.principal_context(rbac.SERVICE_HONEYPOT_PRINCIPAL):
+                _process_hit(ip, port, service, user_agent)
         except Exception as exc:
             log_event("honeypot_error", ip, str(exc))
 

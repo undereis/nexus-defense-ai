@@ -95,6 +95,12 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
     # ampliaria a capacidade de bloquear IP a TODOS os Service Principals,
     # já que compartilham o papel "service") e sem wildcard
     # "monitor.*"/"*"; nenhum papel humano ganhou acesso nesta fase.
+    # CP-SD Fase 6R NÃO acrescenta permissão a este papel DE PROPÓSITO: os 4
+    # auto-isolamentos de subsistema (honeypot/honeytoken/playbook/reconcile)
+    # são gated por PRINCIPAL (allowlist de actor por ActionSpec em
+    # core/policy_engine.py), não por papel — justamente porque uma permissão
+    # de papel aqui seria herdada por TODOS os Service Principals (privilégio
+    # cruzado). Ver policy_engine.ACTION_CATALOG e _allowed_actor_denial.
     "service": {
         "read",
         "risk.sweep_expired", "audit.checkpoint", "watchdog.check_health", "report.generate",
