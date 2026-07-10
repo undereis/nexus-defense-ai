@@ -35,6 +35,14 @@ class ActionSpec:
     requires_toggle: str = ""        # nome do atributo em config que deve ser True
     requires_approval: bool = False
     needs_engagement_ref: bool = False
+    # CP-SD Fase 6R — allowlist de PRINCIPALS (actor exato) para ações restritas a
+    # um Service Principal específico. Vazia = autorização normal por PAPEL
+    # (required_permission via RBAC). Não vazia = autorização por ACTOR
+    # AUTENTICADO (o Principal ativo no contexto): SÓ os actors listados, e SÓ
+    # vindos de principal_context — o papel deixa de importar. Impede privilégio
+    # cruzado entre principals que compartilham role="service" (ex.:
+    # service:billing NÃO pode disparar playbook.auto_isolate).
+    allowed_actors: tuple[str, ...] = ()
 
 
 # Catálogo de ações conhecidas. Tudo que não está aqui cai no _DEFAULT_SPEC.
@@ -156,6 +164,39 @@ ACTION_CATALOG: dict[str, ActionSpec] = {
     # para isolar em tempo real, sem esperar confirmação humana nem round-trip
     # de LLM (documentado nos próprios comentários de monitor_loop).
     "monitor.auto_isolate": ActionSpec("monitor.auto_isolate", True, ActionRisk.MEDIUM),
+    # CP-SD Fase 6R — fecha os 4 call-sites diretos remanescentes de
+    # firewall.block_ip (honeypot/honeytoken/playbook/reconcile). Cada
+    # subsistema de defesa que isolava um IP DIRETO (sem Control Plane) passa
+    # agora por um action_type ESPECÍFICO.
+    #
+    # AUTORIZAÇÃO POR PRINCIPAL (não por papel): estas ações são restritas via
+    # `allowed_actors` ao Service Principal EXATO de cada subsistema. Isto é
+    # DELIBERADO em vez de conceder uma permissão ao papel genérico "service"
+    # (achado da reauditoria da Fase 6R): como TODOS os Service Principals
+    # compartilham role="service", uma permissão de papel deixaria service:billing/
+    # service:siem/service:monitor/etc. dispararem QUALQUER um destes
+    # auto-isolamentos (privilégio cruzado). Com allowed_actors, só
+    # service:honeypot dispara honeypot.auto_isolate, e assim por diante — e SÓ
+    # a partir do Principal autenticado no contexto (fail-closed; ver
+    # _allowed_actor_denial). required_permission="" DE PROPÓSITO: o papel não é
+    # a via de autorização aqui.
+    #
+    # Todas changes_state=True (mutação real de firewall → lab/replay vira
+    # DRY_RUN_ONLY ANTES de firewall.block_ip, defesa em profundidade sobre o
+    # cinto de modo que tools/firewall.py já tem); MEDIUM (mesmo nível de
+    # "block_ip"/"monitor.auto_isolate"); requires_approval=False DELIBERADO —
+    # são isolamentos defensivos automáticos por evidência direta (hit de
+    # honeypot/honeytoken, playbook auto até _AUTO_CAP, drift de reconciliação),
+    # não podem esperar aprovação humana. A trava de infra própria crítica
+    # (asset_registry.check_target) continua valendo como em qualquer ação.
+    "honeypot.auto_isolate": ActionSpec(
+        "", True, ActionRisk.MEDIUM, allowed_actors=(rbac.SERVICE_HONEYPOT_PRINCIPAL.actor,)),
+    "honeytoken.auto_isolate": ActionSpec(
+        "", True, ActionRisk.MEDIUM, allowed_actors=(rbac.SERVICE_HONEYTOKEN_PRINCIPAL.actor,)),
+    "playbook.auto_isolate": ActionSpec(
+        "", True, ActionRisk.MEDIUM, allowed_actors=(rbac.SERVICE_PLAYBOOK_PRINCIPAL.actor,)),
+    "reconcile.reapply_block": ActionSpec(
+        "", True, ActionRisk.MEDIUM, allowed_actors=(rbac.SERVICE_RECONCILE_PRINCIPAL.actor,)),
 }
 
 # Ação desconhecida: conservadora, mas compatível (não exige permissão própria).
@@ -168,6 +209,32 @@ def _spec(action_type: str) -> ActionSpec:
 
 def _needs_approval(spec: ActionSpec) -> bool:
     return spec.requires_approval or spec.risk in (ActionRisk.HIGH, ActionRisk.CRITICAL)
+
+
+def _allowed_actor_denial(spec: ActionSpec, action_type: str) -> str | None:
+    """CP-SD Fase 6R — autorização por PRINCIPAL para ações com `allowed_actors`.
+
+    Exige que o Principal AUTENTICADO no contexto (o que principal_context
+    propaga, lido via control_plane.get_current_principal) seja um dos actors
+    permitidos. FAIL-CLOSED de propósito: sem contexto autenticado, actor
+    forjado apenas como string na requisição (sem principal_context), papel
+    admin ou wildcard — NADA disso abre; só o actor exato vindo do contexto.
+    Retorna a razão do DENY, ou None se autorizado (ou se a ação não usa
+    allowlist).
+
+    Import tardio de get_current_principal para não criar ciclo
+    policy_engine <-> control_plane (control_plane já importa evaluate)."""
+    if not spec.allowed_actors:
+        return None
+    from core.control_plane import get_current_principal
+    current = get_current_principal()
+    if current is not None and current.actor in spec.allowed_actors:
+        return None
+    who = current.actor if current is not None else "(sem contexto autenticado)"
+    return (
+        f"actor '{who}' não autorizado para '{action_type}' — ação restrita ao(s) "
+        f"principal(is) {', '.join(spec.allowed_actors)} (autenticado(s) via contexto)."
+    )
 
 
 def evaluate(request) -> ActionDecision:
@@ -183,8 +250,16 @@ def evaluate(request) -> ActionDecision:
             mode=mode, asset_id=asset_id, target_note=target_note,
         )
 
-    # 1) RBAC — papel sem permissão exigida.
-    if not rbac.has_permission(role, spec.required_permission):
+    # 1) Autorização de identidade.
+    if spec.allowed_actors:
+        # Ação restrita a Service Principal(is) específico(s): gate por ACTOR
+        # AUTENTICADO no contexto (não por papel). Impede privilégio cruzado
+        # entre principals que compartilham role="service".
+        denial = _allowed_actor_denial(spec, request.action_type)
+        if denial is not None:
+            return decision(Decision.DENY, denial)
+    elif not rbac.has_permission(role, spec.required_permission):
+        # RBAC padrão — papel sem permissão exigida.
         return decision(
             Decision.DENY,
             f"papel '{role}' não tem a permissão '{spec.required_permission}' exigida por "
@@ -261,7 +336,13 @@ def runtime_precheck(request) -> ActionDecision:
             required_permission=spec.required_permission, changes_state=spec.changes_state, mode=mode,
         )
 
-    if not rbac.has_permission(role, spec.required_permission):
+    # Mesma autorização de identidade da evaluate (uniforme, não é sistema
+    # paralelo): ação com allowed_actors é gated por ACTOR autenticado.
+    if spec.allowed_actors:
+        denial = _allowed_actor_denial(spec, request.action_type)
+        if denial is not None:
+            return d(Decision.DENY, denial)
+    elif not rbac.has_permission(role, spec.required_permission):
         return d(Decision.DENY, f"papel '{role}' não tem a permissão '{spec.required_permission}'.")
     tc = asset_registry.check_target(request.target, request.action_type, changes_state=spec.changes_state)
     if tc.hard_denied:

@@ -120,7 +120,14 @@ def test_handle_canary_trigger_isolates_real_remote_ip(honeytokens_module, tmp_p
     block_calls = []
     monkeypatch.setattr(honeytokens.firewall, "block_ip", lambda ip, reason: block_calls.append(ip) or "ok")
 
-    honeytokens.handle_canary_trigger(token_id, "198.51.100.7", "teste")
+    # CP-SD Fase 6R (endurecimento): o isolamento por honeytoken só é autorizado
+    # sob a identidade do serviço, instalada pelo entrypoint confiável (o
+    # listener do canário). Aqui simulamos esse contexto explicitamente — sem
+    # ele, o Control Plane nega (ver test_defense_subsystems_control_plane.py).
+    from core import control_plane as cp
+    from core import rbac
+    with cp.principal_context(rbac.SERVICE_HONEYTOKEN_PRINCIPAL):
+        honeytokens.handle_canary_trigger(token_id, "198.51.100.7", "teste")
     assert block_calls == ["198.51.100.7"]
 
 

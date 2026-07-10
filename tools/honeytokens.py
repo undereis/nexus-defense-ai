@@ -27,6 +27,8 @@ import secrets
 import socket
 import threading
 
+from core import control_plane as cp
+from core import rbac
 from database.db import (
     get_honeytoken_triggers,
     list_honeytokens,
@@ -62,7 +64,12 @@ def _handle_canary_connection(conn: socket.socket, ip: str):
             token_id = match.group(1).decode()
             ua_match = _USER_AGENT_RE.search(request)
             user_agent = ua_match.group(1).decode(errors="replace") if ua_match else ""
-            handle_canary_trigger(token_id, ip, user_agent)
+            # CP-SD Fase 6R (endurecimento): o listener do canário é o entrypoint
+            # confiável do serviço de honeytoken — só AQUI SERVICE_HONEYTOKEN é
+            # instalado, explicitamente, antes do caminho governado de
+            # isolamento. Nenhuma função abaixo se autopromove.
+            with cp.principal_context(rbac.SERVICE_HONEYTOKEN_PRINCIPAL):
+                handle_canary_trigger(token_id, ip, user_agent)
         conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nNot Found")
     except (OSError, socket.timeout):
         pass
@@ -213,12 +220,42 @@ def handle_canary_trigger(token_id: str, source_ip: str | None, user_agent: str 
     # Nunca isola loopback — mesmo cuidado do honeypot (tools/honeypot.py
     # _is_safe_to_isolate): testar o próprio canário da própria máquina
     # não deve travar o acesso local a ela mesma. Achado testando de
-    # verdade contra um listener real, não hipotético.
+    # verdade contra um listener real, não hipotético. Guard mantido ANTES
+    # do Control Plane (defesa em profundidade); a trava dura de
+    # asset_registry.check_target no CP é a segunda barreira independente.
     if source_ip and not _is_loopback(source_ip):
-        result = firewall.block_ip(source_ip, f"Honeytoken {token_id} disparado")
-        record_confirmed_isolation(source_ip, f"Honeytoken {token_id} disparado")
-        log_event("honeytoken_isolation", source_ip, result, action_taken="isolado")
+        _isolate_honeytoken_source(source_ip, token_id)
     return True
+
+
+def _isolate_honeytoken_source(source_ip: str, token_id: str) -> None:
+    """CP-SD Fase 6R (endurecimento): o isolamento de um IP que disparou
+    honeytoken passa pelo Control Plane, SEM fallback de identidade. Esta função
+    NÃO instala Principal — EXIGE que o entrypoint confiável (o listener do
+    canário _handle_canary_connection) já tenha instalado
+    SERVICE_HONEYTOKEN_PRINCIPAL. Sem contexto autenticado, a policy nega
+    (allowed_actors) e nada é bloqueado. firewall.block_ip +
+    record_confirmed_isolation só rodam em ALLOW."""
+    reason = f"Honeytoken {token_id} disparado"
+
+    def _do_isolate(**_ignored) -> str:
+        out = firewall.block_ip(source_ip, reason)
+        record_confirmed_isolation(source_ip, reason)
+        return out
+
+    req = cp.make_request(
+        "honeytoken.auto_isolate", target=source_ip,
+        params={"source": "honeytoken", "reason": reason, "token_id": token_id},
+    )
+    res = cp.request_action(req, executor=_do_isolate, tool_name="cp_honeytoken_auto_isolate")
+
+    if res.status is cp.ActionStatus.EXECUTED:
+        log_event("honeytoken_isolation", source_ip, res.output, action_taken="isolado")
+    else:
+        log_event(
+            "honeytoken_isolation_not_executed", source_ip,
+            f"status={res.status.value} {res.output}", action_taken="não isolado",
+        )
 
 
 def _is_loopback(ip: str) -> bool:

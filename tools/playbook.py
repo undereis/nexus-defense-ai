@@ -19,6 +19,7 @@ que PLAYBOOK_AUTO_LEVEL diga.
 import json
 
 from config import PLAYBOOK_AUTO_LEVEL
+from core import control_plane as cp
 from database.db import (
     get_threat_history,
     list_playbook_executions,
@@ -139,6 +140,41 @@ def _determine_level(attack_type: str, score: int) -> int:
     return level
 
 
+def _playbook_auto_isolate(ip: str, attack_type: str, score: int) -> cp.ActionResult:
+    """CP-SD Fase 6R (endurecimento): o isolamento de nível 2 do playbook passa
+    pelo Control Plane, SEM fallback de identidade. Esta função NÃO instala
+    Principal — EXIGE um contexto autenticado com o Service Principal do
+    subsistema (service:playbook). Sem ele, a policy nega (allowed_actors) e
+    nada é bloqueado.
+
+    CONSEQUÊNCIA DOCUMENTADA: `evaluate_and_respond` só é chamada pela tool
+    humana `evaluate_threat_playbook` — NÃO existe entrypoint automático que
+    instale SERVICE_PLAYBOOK (ver relatório da fase). Portanto, hoje, o
+    auto-isolamento de nível 2 do playbook é sempre NEGADO (a identidade em
+    contexto é humana ou service:monitor, nunca service:playbook). O throttle
+    (nível 1) continua funcionando e o relatório indica o nível 2 como NÃO
+    executado por falta de autorização automática. Para bloquear de fato, o
+    operador usa isolate_ip (governado por 'block_ip'). Isto é DELIBERADO — não
+    inventamos um entrypoint automático nesta fase e não deixamos a tool humana
+    se autopromover a serviço.
+
+    firewall.block_ip + record_confirmed_isolation só rodam em ALLOW (e a trava
+    dura de asset_registry.check_target barra infra própria mesmo em ALLOW)."""
+    block_reason = f"Playbook automático: {attack_type} (score {score})"
+    record_reason = f"Playbook automático: {attack_type}"
+
+    def _do_isolate(**_ignored) -> str:
+        out = firewall.block_ip(ip, reason=block_reason)
+        record_confirmed_isolation(ip, record_reason)
+        return out
+
+    req = cp.make_request(
+        "playbook.auto_isolate", target=ip,
+        params={"source": "playbook", "attack_type": attack_type, "score": score},
+    )
+    return cp.request_action(req, executor=_do_isolate, tool_name="cp_playbook_auto_isolate")
+
+
 def evaluate_and_respond(ip: str, attack_type: str, metadata: dict | None = None) -> str:
     """Avalia a ameaça de um IP e executa a resposta proporcional até o
     nível permitido por PLAYBOOK_AUTO_LEVEL.
@@ -177,13 +213,16 @@ def evaluate_and_respond(ip: str, attack_type: str, metadata: dict | None = None
         lines.append(f"  ✓ Nível 1 executado: {result}")
 
     if effective_auto >= 2:
-        result = firewall.block_ip(
-            ip,
-            reason=f"Playbook automático: {attack_type} (score {score})",
-        )
-        record_confirmed_isolation(ip, f"Playbook automático: {attack_type}")
-        actions_taken.append(f"nível 2 (isolamento): {result}")
-        lines.append(f"  ✓ Nível 2 executado: {result}")
+        res = _playbook_auto_isolate(ip, attack_type, score)
+        if res.status is cp.ActionStatus.EXECUTED:
+            actions_taken.append(f"nível 2 (isolamento): {res.output}")
+            lines.append(f"  ✓ Nível 2 executado: {res.output}")
+        else:
+            # DENY/DRY_RUN_ONLY (lab/replay/infra crítica/RBAC): o isolamento
+            # real NÃO aconteceu — refletido honestamente no relatório, nunca
+            # apresentado como sucesso.
+            actions_taken.append(f"nível 2 (isolamento) NÃO executado ({res.status.value}): {res.output}")
+            lines.append(f"  ✗ Nível 2 NÃO executado ({res.status.value}): {res.output}")
 
     if effective_auto >= 4:
         try:
