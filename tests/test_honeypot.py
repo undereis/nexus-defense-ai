@@ -227,7 +227,30 @@ def test_describe_credentials_after_capture(honeypot_module):
     dbmod.record_honeypot_credential("1.2.3.4", 21, "ftp", "admin", "1234")
     result = honeypot.describe_credentials()
     assert "1.2.3.4" in result
-    assert "admin" in result
+    assert "valores protegidos" in result
+    assert "admin" not in result
+    assert "1234" not in result
+
+
+def test_credential_values_never_leave_through_logs_or_notifications(
+    honeypot_module, monkeypatch
+):
+    honeypot, _ = honeypot_module
+    logged = []
+    notified = []
+    monkeypatch.setattr(honeypot, "log_event", lambda *args, **kwargs: logged.append((args, kwargs)))
+    monkeypatch.setattr(
+        honeypot.notify,
+        "send_notification",
+        lambda *args, **kwargs: notified.append((args, kwargs)),
+    )
+
+    honeypot._process_credential("1.2.3.4", 21, "ftp", "secret-user", "secret-pass")
+
+    outbound = repr((logged, notified))
+    assert "secret-user" not in outbound
+    assert "secret-pass" not in outbound
+    assert "values=protected" in outbound
 
 
 def test_stop_marks_service_as_manually_stopped(honeypot_module):

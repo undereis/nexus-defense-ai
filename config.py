@@ -45,13 +45,17 @@ SSH_KEY_PATH = os.getenv("SSH_KEY_PATH", "")
 
 API_TOKEN = _secret("NEXUS_API_TOKEN", "")
 
+# Chave Fernet usada exclusivamente para criptografar, em repouso, usuário e
+# senha observados nos honeypots. Deve morar no Keychain/.env e nunca no banco.
+HONEYPOT_CREDENTIAL_KEY = _secret("HONEYPOT_CREDENTIAL_KEY", "")
+
 # --- Governança / Control Plane ---
 # MODO OPERACIONAL do backend (fonte da verdade da EXECUÇÃO): 'real' | 'lab' |
-# 'replay'. É independente do modo VISUAL do cliente Tauri (que é só localStorage
-# do cliente e não trafega para cá). Em 'lab'/'replay' a policy engine NÃO deixa
+# 'replay'. O cliente Tauri consulta e reflete este modo efetivo, mas não decide
+# a autorização. Em 'lab'/'replay' a policy engine NÃO deixa
 # executar ação real que altere estado (só leitura/refresh). Um operador pode
 # sobrescrever em runtime (gravado em system_state); este valor é só o default.
-NEXUS_OPERATING_MODE = os.getenv("NEXUS_OPERATING_MODE", "real").lower()
+NEXUS_OPERATING_MODE = os.getenv("NEXUS_OPERATING_MODE", "lab").lower()
 
 # Ator/role padrão quando não há sistema de usuários real (compatível com o
 # token único atual): toda ação sem ator explícito é atribuída a 'local_admin'
@@ -107,7 +111,7 @@ SHODAN_API_KEY = _secret("SHODAN_API_KEY", "")
 # Reporta automaticamente ao AbuseIPDB todo IP que a Nexus confirma
 # isolar (contamina a reputação global do atacante, sem precisar pedir).
 # Só tem efeito se ABUSEIPDB_API_KEY estiver configurada.
-AUTO_REPORT_ABUSEIPDB = os.getenv("AUTO_REPORT_ABUSEIPDB", "true").lower() == "true"
+AUTO_REPORT_ABUSEIPDB = os.getenv("AUTO_REPORT_ABUSEIPDB", "false").lower() == "true"
 
 # Bot User OAuth Token (xoxb-...) + canal de destino, para postar notificações
 # direto via Slack Web API (chat.postMessage) em vez de um webhook genérico.

@@ -5,15 +5,16 @@ monitor) e qualquer **interface visual é um cliente** que fala HTTP com esta
 API — incluindo o cliente desktop de referência (Tauri + React) em
 `clients/tauri/` e o dashboard web embutido (`/dashboard`).
 
-Servir: `venv/bin/uvicorn api.server:app --host 0.0.0.0 --port 8000`
-(em produção, atrás de HTTPS — nginx/caddy ou túnel).
+Servir localmente: `venv/bin/uvicorn api.server:app --host 127.0.0.1 --port 8000`.
+Exposição remota exige um limite TLS revisado — nginx/caddy ou túnel seguro.
 
 ## Autenticação
 
 Header `Authorization: Bearer <token>` em todos os endpoints `/api/*`,
-`/chat` e `/dashboard/data`. O token vem de `NEXUS_API_TOKEN` no `.env` (se
-vazio, o servidor gera um temporário e o imprime no stdout ao subir). Sem token
-ou token errado → `401`.
+`/chat` e `/dashboard/data`. O token vem de `NEXUS_API_TOKEN`, preferencialmente
+armazenado no backend de segredos do sistema. Se ele estiver ausente, o servidor
+recusa a inicialização; nenhum token temporário é criado ou impresso. Token
+ausente ou incorreto numa requisição → `401`.
 
 `/health` e `/dashboard` (a casca HTML) são públicos.
 

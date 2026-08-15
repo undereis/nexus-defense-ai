@@ -157,13 +157,13 @@ def _process_credential(ip: str, port: int, service: str, username: str | None, 
     record_honeypot_credential(ip, port, service, username, password)
     log_event(
         "honeypot_credential_captured", ip,
-        f"service={service} port={port} username={username!r}",
+        f"service={service} port={port} values=protected",
         action_taken="capturado",
     )
     notify.send_notification(
         "Nexus: credencial capturada pelo honeypot",
         f"IP {ip} tentou login no honeypot {service} (porta {port})\n"
-        f"usuário={username!r} senha={password!r}",
+        "Valores protegidos no cofre local; não enviados por notificação.",
     )
 
 
@@ -610,7 +610,7 @@ def describe_credentials(limit: int = 50) -> str:
     rows = list_honeypot_credentials(limit)
     if not rows:
         return "Nenhuma credencial capturada ainda."
-    lines = ["Credenciais capturadas pelo honeypot (mais recente primeiro):"]
-    for ip, port, service, username, password, timestamp in rows:
-        lines.append(f"  [{timestamp}] {ip} ({service}:{port}) -> usuário={username!r} senha={password!r}")
+    lines = ["Credenciais capturadas pelo honeypot (valores protegidos):"]
+    for ip, port, service, _username, _password, timestamp in rows:
+        lines.append(f"  [{timestamp}] {ip} ({service}:{port}) -> [valores protegidos]")
     return "\n".join(lines)

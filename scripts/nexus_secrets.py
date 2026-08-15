@@ -10,6 +10,8 @@ Uso:
     venv/bin/python scripts/nexus_secrets.py migrate [NOME ...] [--force]
     venv/bin/python scripts/nexus_secrets.py set NOME
     venv/bin/python scripts/nexus_secrets.py delete NOME [--yes]
+    venv/bin/python scripts/nexus_secrets.py init-credential-key [--force]
+    venv/bin/python scripts/nexus_secrets.py scrub-env [NOME ...] [--yes]
 
 Depois de migrar, REMOVA a linha correspondente do `.env` (o Keychain passa a
 ser a fonte da verdade; enquanto a linha existir no .env ela é redundante, mas
@@ -20,12 +22,15 @@ Keychain, ele vence o .env.
 import argparse
 import getpass
 import os
+import re
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv  # noqa: E402
+from cryptography.fernet import Fernet  # noqa: E402
 
 from core import secrets  # noqa: E402
 
@@ -120,6 +125,81 @@ def _cmd_delete(name: str, yes: bool) -> int:
     return 1
 
 
+def _cmd_init_credential_key(force: bool) -> int:
+    """Gera a chave Fernet diretamente no Keychain, sem exibir seu valor."""
+    name = "HONEYPOT_CREDENTIAL_KEY"
+    if not secrets.keychain_available():
+        print("ERRO: Keychain indisponível neste ambiente. Nada foi gerado.")
+        return 1
+    if secrets._keychain_get(name) and not force:
+        print("OK: chave de credenciais já existe no Keychain.")
+        return 0
+    value = Fernet.generate_key().decode("ascii")
+    if secrets.set_secret(name, value):
+        print("OK: nova chave de credenciais gravada no Keychain (valor não exibido).")
+        return 0
+    print("ERRO: não foi possível gravar a chave de credenciais no Keychain.")
+    return 1
+
+
+def _scrub_env_file(names: list[str], env_path: Path) -> list[str]:
+    """Esvazia no .env apenas segredos que já existem no Keychain."""
+    protected = {name for name in names if secrets._keychain_get(name)}
+    if not protected or not env_path.exists():
+        return []
+
+    assignment = re.compile(r"^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)\s*=")
+    changed: set[str] = set()
+    output: list[str] = []
+    for line in env_path.read_text(encoding="utf-8").splitlines(keepends=True):
+        match = assignment.match(line)
+        if match and match.group(2) in protected:
+            ending = "\n" if line.endswith("\n") else ""
+            output.append(f"{match.group(1)}{match.group(2)}={ending}")
+            changed.add(match.group(2))
+        else:
+            output.append(line)
+
+    if not changed:
+        return []
+    descriptor, temp_name = tempfile.mkstemp(prefix=".env.nexus-", dir=env_path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temp_file:
+            temp_file.writelines(output)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, env_path)
+    finally:
+        if os.path.exists(temp_name):
+            os.unlink(temp_name)
+    return sorted(changed)
+
+
+def _cmd_scrub_env(names: list[str], yes: bool) -> int:
+    targets = names or list(secrets.SECRET_ENV_NAMES)
+    unknown = [name for name in targets if name not in secrets.SECRET_ENV_NAMES]
+    if unknown:
+        print(f"ERRO: nome(s) desconhecido(s): {', '.join(unknown)}")
+        return 1
+    if not secrets.keychain_available():
+        print("ERRO: Keychain indisponível. O .env não foi alterado.")
+        return 1
+    if not yes:
+        response = input(
+            "Esvaziar no .env os segredos já confirmados no Keychain? [s/N] "
+        ).strip().lower()
+        if response not in ("s", "sim", "y", "yes"):
+            print("Cancelado.")
+            return 0
+    changed = _scrub_env_file(targets, Path(__file__).resolve().parent.parent / ".env")
+    if changed:
+        print("Removidos do .env (mantidos no Keychain):", ", ".join(changed))
+    else:
+        print("Nenhum segredo confirmado no Keychain precisava ser removido do .env.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Gerência de segredos no Keychain do macOS.")
     sub = parser.add_subparsers(dest="cmd")
@@ -137,6 +217,19 @@ def main() -> int:
     p_del.add_argument("name")
     p_del.add_argument("--yes", action="store_true", help="não pede confirmação")
 
+    p_cred = sub.add_parser(
+        "init-credential-key",
+        help="gera a chave Fernet dos honeypots diretamente no Keychain",
+    )
+    p_cred.add_argument("--force", action="store_true", help="substitui a chave existente")
+
+    p_scrub = sub.add_parser(
+        "scrub-env",
+        help="esvazia no .env somente segredos já confirmados no Keychain",
+    )
+    p_scrub.add_argument("names", nargs="*", help="nomes específicos (padrão: todos)")
+    p_scrub.add_argument("--yes", action="store_true", help="não pede confirmação")
+
     args = parser.parse_args()
     if args.cmd == "status" or args.cmd is None:
         return _cmd_status()
@@ -146,6 +239,10 @@ def main() -> int:
         return _cmd_set(args.name)
     if args.cmd == "delete":
         return _cmd_delete(args.name, args.yes)
+    if args.cmd == "init-credential-key":
+        return _cmd_init_credential_key(args.force)
+    if args.cmd == "scrub-env":
+        return _cmd_scrub_env(args.names, args.yes)
     parser.print_help()
     return 1
 

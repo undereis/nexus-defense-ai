@@ -1,4 +1,4 @@
-# Cliente desktop (Tauri + React) — Nexus Defense AI
+# Nexus Client — Tauri + React
 
 Interface visual **nativa para macOS** (Tauri v2 + React + TypeScript) que
 substitui o antigo cliente Delphi. Segue a mesma arquitetura: o **motor fica em
@@ -28,7 +28,7 @@ npm install
 # ícones do app (uma vez): gere a partir de um PNG quadrado seu
 npm run tauri icon caminho/para/logo.png
 # sobe o motor em outro terminal, na raiz do repo:
-#   venv/bin/uvicorn api.server:app --host 0.0.0.0 --port 8000
+#   venv/bin/uvicorn api.server:app --host 127.0.0.1 --port 8000
 npm run tauri dev
 ```
 
@@ -39,10 +39,9 @@ npm run tauri build
 O `.app`/`.dmg` sai em `src-tauri/target/release/bundle/`.
 
 ## Usar (Command Center)
-1. Na tela de conexão, informe a **URL da API** (ex.: `http://127.0.0.1:8000`) e o
-   **token** (`NEXUS_API_TOKEN` do `.env`; se vazio, o servidor imprime um
-   temporário no stdout ao subir). Ficam salvos localmente (localStorage) e podem
-   ser trocados depois em **Configurações**.
+1. Na tela de conexão, informe a **URL local da API** (`http://127.0.0.1:8000`) e o
+   **token** provisionado no Keychain/ambiente. A URL é persistida; o token fica
+   somente em `sessionStorage` e desaparece ao encerrar a sessão.
 2. **Topbar:** status da API (online/offline/token inválido), última atualização
    (com aviso de "possivelmente vencido") e botão Atualizar. Os dados fazem
    **auto-refresh a cada 15s** via `/api/overview`.
@@ -117,16 +116,11 @@ clients/tauri/
 ```
 
 ### Segurança / produção
-- O **token** nunca é exibido em texto claro (campo mascarado) e vai só no header
-  `Authorization: Bearer`. Guardado em `localStorage` por conveniência de dev;
-  para produção, considere `tauri-plugin-store`/keychain. *(documentado na UI em
-  Configurações → Recomendações de produção)*
-- Use **HTTPS** fora da LAN (o token vai no header).
-- O escopo de URLs do HTTP está amplo em `capabilities/default.json`
-  (`http://*/*` + `https://*/*`) para permitir apontar a API à mão; **restrinja**
-  para o host real em produção. *Não foi estreitado aqui para não quebrar o dev.*
-- O **CSP** está em `null` em `tauri.conf.json`; defina uma política restritiva ao
-  distribuir. *Documentado, não alterado.*
+- O **token** nunca é exibido em texto claro, segue somente no header
+  `Authorization: Bearer` e não é persistido entre sessões.
+- A capability HTTP permite apenas `127.0.0.1:8000` e `localhost:8000`.
+- O shell aplica uma CSP restritiva. Uma API remota exige build específica com o
+  domínio HTTPS exato; não use curingas.
 
 ## Limitações atuais (sem hardware/laboratório)
 - **Mikrotik/RouterOS:** a API REST não expõe esses endpoints hoje → seção mostra

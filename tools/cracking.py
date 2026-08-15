@@ -31,8 +31,6 @@ def crack_with_hashcat(hash_file: str, hash_mode: str, wordlist: str, attack_mod
     também em WORKDIR. hash_mode é o código numérico do hashcat (ex: 0 para
     MD5, 1000 para NTLM, 1800 para sha512crypt — `hashcat --help` lista todos).
     attack_mode 0 = dicionário (padrão)."""
-    if not shutil.which("hashcat"):
-        return "hashcat não está instalado. Rode: brew install hashcat"
     if not _MODE_RE.match(hash_mode) or not _MODE_RE.match(attack_mode):
         return "hash_mode e attack_mode devem ser números (ver `hashcat --help`)."
 
@@ -45,6 +43,8 @@ def crack_with_hashcat(hash_file: str, hash_mode: str, wordlist: str, attack_mod
         return f"Arquivo de hash não encontrado em workdir/: {hash_file}"
     if not wordlist_path.is_file():
         return f"Wordlist não encontrada em workdir/: {wordlist}"
+    if not shutil.which("hashcat"):
+        return "hashcat não está instalado. Rode: brew install hashcat"
 
     log_event("hashcat_attempt", None, f"hash_file={hash_file} mode={hash_mode}", action_taken="executando")
 
@@ -76,20 +76,19 @@ def crack_with_john(hash_file: str, wordlist: str = "", hash_format: str = "") -
     — sem isso, o John tenta auto-detectar e pode escolher errado para
     hashes "crus" sem prefixo identificador; se a primeira tentativa não
     encontrar nada, tente de novo informando o formato explicitamente."""
-    if not shutil.which("john"):
-        return "john não está instalado. Rode: brew install john-jumbo"
-
     try:
         hash_path = resolve_in_workdir(hash_file)
     except ValueError as exc:
         return str(exc)
     if not hash_path.is_file():
         return f"Arquivo de hash não encontrado em workdir/: {hash_file}"
+    if hash_format and not _FORMAT_RE.match(hash_format):
+        return f"hash_format inválido: {hash_format!r}"
+    if not shutil.which("john"):
+        return "john não está instalado. Rode: brew install john-jumbo"
 
     cmd = ["john", f"--max-run-time={JOHN_TIMEOUT_SECONDS}"]
     if hash_format:
-        if not _FORMAT_RE.match(hash_format):
-            return f"hash_format inválido: {hash_format!r}"
         cmd.append(f"--format={hash_format}")
     if wordlist:
         try:
