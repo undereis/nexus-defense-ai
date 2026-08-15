@@ -6,6 +6,9 @@ __pycache__/
 .DS_Store
 .claude/
 .pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 workdir/*
 !workdir/.gitkeep
 logs/

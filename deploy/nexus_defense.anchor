@@ -1,0 +1,4 @@
+table <nexus_blocklist> persist
+table <nexus_ratelist> persist
+pass in quick from <nexus_ratelist> keep state (max-src-conn-rate 20/5, overload <nexus_blocklist> flush global)
+block drop quick from <nexus_blocklist> to any

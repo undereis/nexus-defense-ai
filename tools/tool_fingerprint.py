@@ -115,14 +115,14 @@ def classify_credentials(pairs: list[tuple[str | None, str | None]]) -> dict | N
         return {
             "family": "botnet IoT estilo Mirai",
             "confidence": "alta",
-            "signal": f"{len(mirai)} credencial(is) do dicionário default do Mirai (ex.: {sorted(mirai)[:3]})",
+            "signal": f"{len(mirai)} credencial(is) do dicionário default do Mirai",
         }
     common = s & _COMMON_DEFAULTS
     if common:
         return {
             "family": "brute force com defaults comuns",
             "confidence": "média",
-            "signal": f"{len(common)} credencial(is) default comum(ns) (ex.: {sorted(common)[:3]})",
+            "signal": f"{len(common)} credencial(is) default comum(ns)",
         }
     return {
         "family": "brute force / wordlist customizada",

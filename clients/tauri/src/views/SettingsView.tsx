@@ -32,9 +32,9 @@ export function SettingsView() {
           <StatusPill tone={tone} label={status === "ok" ? "conectado" : status} />
         </div>
         <div className="muted-note" style={{ marginTop: 10 }}>
-          URL e token ficam salvos localmente (<code>localStorage</code>) por conveniência. O token
-          nunca é exibido em texto claro (campo mascarado) e vai apenas no cabeçalho
-          <code> Authorization: Bearer</code>. Use <strong>HTTPS</strong> fora da LAN.
+          A URL fica em <code>localStorage</code>; o token permanece somente na sessão atual
+          (<code>sessionStorage</code>). Esta distribuição aceita apenas a API local em
+          <code> 127.0.0.1:8000</code> ou <code>localhost:8000</code>.
         </div>
       </DataPanel>
 
@@ -69,15 +69,12 @@ export function SettingsView() {
 
       <DataPanel title="Recomendações de produção" icon={ShieldAlert}>
         <ul className="env-list">
-          <li><strong>Token em localStorage</strong> é conveniência de desenvolvimento. Para
-            produção, considere armazenamento seguro (keychain / <code>tauri-plugin-store</code>).</li>
-          <li><strong>Escopo HTTP amplo</strong> em <code>capabilities/default.json</code>
-            (<code>http://*/*</code> + <code>https://*/*</code>) permite apontar a API à mão.
-            Recomenda-se restringir ao host real em produção. <em>Não foi alterado aqui</em> para
-            não quebrar o dev.</li>
-          <li><strong>CSP</strong> está em <code>null</code> em <code>tauri.conf.json</code>.
-            Defina uma política restritiva ao distribuir. <em>Documentado, não alterado.</em></li>
-          <li><strong>Transporte:</strong> use HTTPS/VPN fora da LAN — o token vai no cabeçalho.</li>
+          <li><strong>Token:</strong> mantido apenas durante a sessão. Para persistência futura,
+            use o Keychain; nunca volte a gravá-lo em <code>localStorage</code>.</li>
+          <li><strong>HTTP:</strong> a capability está limitada à API local na porta 8000.</li>
+          <li><strong>CSP:</strong> política restritiva aplicada no shell Tauri.</li>
+          <li><strong>API remota:</strong> exige uma build específica com domínio HTTPS explícito
+            na capability; curingas não são aceitos.</li>
           <li>O <code>.app</code> ainda <strong>não é assinado/notarizado</strong>; faça-o antes de distribuir.</li>
         </ul>
       </DataPanel>

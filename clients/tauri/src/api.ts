@@ -7,8 +7,26 @@
 
 import { fetch } from "@tauri-apps/plugin-http";
 
+export function validateBaseUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("URL da API inválida.");
+  }
+  const loopback = parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost";
+  if (!loopback || parsed.protocol !== "http:" || parsed.port !== "8000" || parsed.username || parsed.password) {
+    throw new Error("Esta versão aceita somente a API local em http://127.0.0.1:8000 ou http://localhost:8000.");
+  }
+  return parsed.origin;
+}
+
 export class NexusApi {
-  constructor(public baseUrl: string, public token: string) {}
+  public baseUrl: string;
+
+  constructor(baseUrl: string, public token: string) {
+    this.baseUrl = validateBaseUrl(baseUrl);
+  }
 
   private async req(method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
     const url = this.baseUrl.replace(/\/+$/, "") + path;

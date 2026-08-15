@@ -43,7 +43,7 @@ export function isStale(lastUpdated: Date | null): boolean {
 
 export function NexusProvider({ children }: { children: ReactNode }) {
   const [baseUrl, setBaseUrl] = useState(localStorage.getItem("nexus_url") || "http://127.0.0.1:8000");
-  const [token, setToken] = useState(localStorage.getItem("nexus_token") || "");
+  const [token, setToken] = useState(sessionStorage.getItem("nexus_token") || "");
   const [data, setData] = useState<Overview | null>(null);
   const [status, setStatus] = useState<ConnStatus>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -51,11 +51,17 @@ export function NexusProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
 
+  // Remove uma credencial persistida por versões antigas sem reutilizá-la.
+  useEffect(() => {
+    localStorage.removeItem("nexus_token");
+  }, []);
+
   const configured = baseUrl.trim() !== "" && token.trim() !== "";
 
   const setConfig = useCallback((url: string, tk: string) => {
     localStorage.setItem("nexus_url", url);
-    localStorage.setItem("nexus_token", tk);
+    sessionStorage.setItem("nexus_token", tk);
+    localStorage.removeItem("nexus_token");
     setBaseUrl(url);
     setToken(tk);
   }, []);

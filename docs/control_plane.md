@@ -61,21 +61,19 @@ Usuário / API / IA
 ## Modo operacional — fonte da verdade
 
 - **Backend** (`core/operating_mode`): `real | lab | replay`. Default
-  `config.NEXUS_OPERATING_MODE` (`real`), override em runtime via `system_state`
+  `config.NEXUS_OPERATING_MODE` (`lab`), override em runtime via `system_state`
   (tools `get_operating_mode`/`set_operating_mode`). **É o que governa a
   EXECUÇÃO.**
-- **Cliente Tauri** (modo visual Real/Lab/Replay): é só `localStorage` do cliente,
-  para honestidade visual — **não trafega** até o backend e **não** decide
-  execução. São fontes da verdade SEPARADAS e propositalmente independentes.
-  Sincronizá-las (ex.: cliente enviar um header de modo desejado, o backend
-  decidir se aceita) é um passo futuro.
+- **Cliente Tauri**: consulta `GET /api/mode` e reflete o modo efetivo do backend.
+  Uma proposta de mudança usa `POST /api/mode`, sujeito a RBAC e auditoria. Em
+  modo offline, o valor local é apenas apresentação e não autoriza execução.
 
-## Compatibilidade (nada quebra por padrão)
+## Compatibilidade e padrão seguro
 
 - Ator/role padrão: `local_admin`/`admin` (`config.DEFAULT_ACTOR/DEFAULT_ROLE`),
   compatível com o token único atual. Admin tem todas as permissões — mas ações
   de alto risco ainda passam por aprovação.
-- Modo padrão: `real`.
+- Modo padrão: `lab`. A seleção de `real` deve ser deliberada e auditada.
 - Inventário: `REQUIRE_ASSET_AUTHORIZATION=false` (padrão) → alvo fora do
   inventário é permitido porém **auditado** como "fora do inventário"; só as
   travas de segurança duras negam. `true` endurece (só ativos cadastrados passam).

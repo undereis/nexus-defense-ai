@@ -1,11 +1,13 @@
 import hashlib
+import os
 import json
 import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from config import DB_PATH
+from config import DB_PATH, HONEYPOT_CREDENTIAL_KEY
+from core.credential_vault import is_protected, protect, reveal
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
@@ -578,7 +580,13 @@ CREATE TABLE IF NOT EXISTS event_signatures (
 
 @contextmanager
 def get_conn():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
+    try:
+        os.chmod(DB_PATH, 0o600)
+    except OSError as exc:
+        conn.close()
+        raise RuntimeError(f"não foi possível proteger o banco {DB_PATH}: {exc}") from exc
     try:
         yield conn
         conn.commit()
@@ -626,6 +634,25 @@ def init_db():
                 conn.execute(f"ALTER TABLE siem_state ADD COLUMN {column}")
             except sqlite3.OperationalError:
                 pass  # coluna já existe
+        _migrate_honeypot_credentials(conn)
+
+
+def _migrate_honeypot_credentials(conn) -> None:
+    """Remove texto claro legado da tabela sem alterar o contrato de leitura."""
+    rows = conn.execute(
+        "SELECT id, username, password FROM honeypot_credentials"
+    ).fetchall()
+    for row_id, username, password in rows:
+        if is_protected(username) and is_protected(password):
+            continue
+        conn.execute(
+            "UPDATE honeypot_credentials SET username = ?, password = ? WHERE id = ?",
+            (
+                protect(username, HONEYPOT_CREDENTIAL_KEY),
+                protect(password, HONEYPOT_CREDENTIAL_KEY),
+                row_id,
+            ),
+        )
 
 
 def _compute_entry_hash(prev_hash: str, timestamp: str, event_type: str,
@@ -1208,25 +1235,34 @@ def delete_tuned_threshold(alert_type: str, scope: str) -> bool:
 
 
 def record_honeypot_credential(ip: str, port: int, service: str, username: str | None, password: str | None):
-    """Registra usuário/senha que um atacante digitou de verdade no
-    honeypot — inteligência muito mais rica que só saber que ele
-    conectou: agora sabemos o que ele tentou usar."""
+    """Registra credenciais de honeypot criptografadas antes do SQLite."""
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO honeypot_credentials (ip, port, service, username, password) "
             "VALUES (?, ?, ?, ?, ?)",
-            (ip, port, service, username, password),
+            (
+                ip,
+                port,
+                service,
+                protect(username, HONEYPOT_CREDENTIAL_KEY),
+                protect(password, HONEYPOT_CREDENTIAL_KEY),
+            ),
         )
 
 
 def list_honeypot_credentials(limit: int = 50):
-    """Retorna (ip, port, service, username, password, timestamp) capturados."""
+    """Retorna credenciais descriptografadas apenas na memória do processo."""
     with get_conn() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT ip, port, service, username, password, timestamp "
             "FROM honeypot_credentials ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
+    return [
+        (ip, port, service, reveal(username, HONEYPOT_CREDENTIAL_KEY),
+         reveal(password, HONEYPOT_CREDENTIAL_KEY), timestamp)
+        for ip, port, service, username, password, timestamp in rows
+    ]
 
 
 def list_honeypot_hits_for_ip(ip: str, limit: int = 20):
@@ -1240,13 +1276,18 @@ def list_honeypot_hits_for_ip(ip: str, limit: int = 20):
 
 
 def list_honeypot_credentials_for_ip(ip: str, limit: int = 20):
-    """Retorna (port, service, username, password, timestamp) capturados de um IP específico."""
+    """Retorna valores descriptografados apenas na memória do processo."""
     with get_conn() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT port, service, username, password, timestamp FROM honeypot_credentials "
             "WHERE ip = ? ORDER BY id DESC LIMIT ?",
             (ip, limit),
         ).fetchall()
+    return [
+        (port, service, reveal(username, HONEYPOT_CREDENTIAL_KEY),
+         reveal(password, HONEYPOT_CREDENTIAL_KEY), timestamp)
+        for port, service, username, password, timestamp in rows
+    ]
 
 
 def get_attacker_user_agents_for_ip(ip: str) -> list[str]:

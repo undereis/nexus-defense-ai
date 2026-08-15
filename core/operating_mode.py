@@ -1,7 +1,7 @@
 """Modo operacional do BACKEND — fonte da verdade da EXECUÇÃO.
 
-real | lab | replay. Independente do modo VISUAL do cliente Tauri (esse é só
-localStorage do cliente e não trafega até aqui). Default vem de
+real | lab | replay. O cliente Tauri reflete este estado efetivo, mas não decide
+a autorização. Default vem de
 config.NEXUS_OPERATING_MODE; um operador pode sobrescrever em runtime (gravado
 na tabela system_state). A policy engine consulta isto para nunca deixar uma
 ação real que altere estado rodar em lab/replay.
@@ -20,8 +20,8 @@ def get_operating_mode() -> str:
     val = (get_system_state(_KEY, "") or "").strip().lower()
     if val in VALID_MODES:
         return val
-    default = (getattr(config, "NEXUS_OPERATING_MODE", "real") or "real").lower()
-    return default if default in VALID_MODES else "real"
+    default = (getattr(config, "NEXUS_OPERATING_MODE", "lab") or "lab").lower()
+    return default if default in VALID_MODES else "lab"
 
 
 def set_operating_mode(mode: str) -> str:
