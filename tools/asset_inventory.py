@@ -80,9 +80,6 @@ def scan_network(cidr: str | None = None, mode: str = "passive") -> str:
 
     Usa -T2 (Polite) para não disparar o monitor de DDoS na própria rede.
     Execute APENAS em blocos próprios registrados em register_own_ip_block."""
-    if not shutil.which("nmap"):
-        return "nmap não instalado. Rode: brew install nmap"
-
     blocks = list_ip_blocks()
     if cidr:
         targets = [cidr]

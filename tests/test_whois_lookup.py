@@ -29,11 +29,13 @@ def test_validate_asn_rejects_invalid_inputs(asn):
         _validate_asn(asn)
 
 
+@pytest.mark.integration
 def test_whois_query_real_ip_returns_registry_data():
     result = whois_query("8.8.8.8")
     assert "GOGL" in result or "Google" in result or "ARIN" in result
 
 
+@pytest.mark.integration
 def test_whois_query_real_domain_returns_registry_data():
     result = whois_query("google.com")
     assert "VERISIGN" in result.upper() or "GOOGLE" in result.upper()
@@ -44,6 +46,7 @@ def test_whois_query_rejects_command_injection_attempt():
         whois_query("$(rm -rf /)")
 
 
+@pytest.mark.integration
 def test_asn_lookup_real_known_asn_returns_holder_and_prefixes():
     result = asn_lookup("15169")
     assert "AS15169" in result
@@ -51,6 +54,7 @@ def test_asn_lookup_real_known_asn_returns_holder_and_prefixes():
     assert "Prefixos anunciados" in result
 
 
+@pytest.mark.integration
 def test_asn_lookup_accepts_as_prefix():
     result = asn_lookup("AS15169")
     assert "AS15169" in result

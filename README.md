@@ -108,7 +108,7 @@ The repository currently includes more than 1,200 automated Python tests. CI
 validates:
 
 - Ruff static checks;
-- the complete Pytest suite;
+- the hermetic Pytest suite (external-network integrations are opt-in);
 - pinned Python dependency vulnerabilities;
 - npm dependency audit and production build;
 - Rust/Tauri compilation with the committed lockfile.
@@ -120,6 +120,9 @@ ruff check .
 pytest -q
 cd clients/tauri && npm ci && npm run build && cargo check --locked --manifest-path src-tauri/Cargo.toml
 ```
+
+External integration checks can be run separately on a prepared host with
+`pytest -q -m integration`.
 
 ## Repository map
 
