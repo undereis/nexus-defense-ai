@@ -12,3 +12,4 @@ htmlcov/
 workdir/*
 !workdir/.gitkeep
 logs/
+work/
