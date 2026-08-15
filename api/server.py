@@ -7,6 +7,7 @@ mesmo jeito, usando o mesmo runtime compartilhado em agents/runtime.py).
 Rodar: ./venv/bin/uvicorn api.server:app --host 127.0.0.1 --port 8000
 """
 
+from contextlib import asynccontextmanager
 import secrets
 from urllib.parse import parse_qs
 
@@ -25,17 +26,33 @@ from database.db import init_db, log_event
 from tools import dashboard, noc_api, noc_commands, telegram
 from tools.slack_verify import verify_signature
 
-app = FastAPI(title="Nexus Defense AI", version="0.1.0")
+def _require_configured_token(value: str) -> str:
+    """Falha fechada quando o token administrativo não foi configurado.
 
-_runtime_token = API_TOKEN
-if not _runtime_token:
-    _runtime_token = secrets.token_urlsafe(32)
-    print(
-        "\n[Nexus API] NEXUS_API_TOKEN não configurado no .env. Gerei um token "
-        f"temporário válido só nesta execução:\n\n    {_runtime_token}\n\n"
-        "Defina NEXUS_API_TOKEN no .env para um token fixo entre reinicializações.\n",
-        flush=True,
-    )
+    Gerar e imprimir um token no boot facilita desenvolvimento, mas também o
+    expõe a logs, histórico de terminal e coletores de processo. O operador deve
+    provisioná-lo no Keychain ou no ambiente antes de iniciar a API.
+    """
+    token = (value or "").strip()
+    if not token:
+        raise RuntimeError(
+            "NEXUS_API_TOKEN ausente. Configure-o no Keychain ou no .env antes "
+            "de iniciar a API; tokens administrativos nunca são gerados ou "
+            "exibidos automaticamente."
+        )
+    return token
+
+
+_runtime_token = _require_configured_token(API_TOKEN)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="Nexus Defense AI", version="0.1.0", lifespan=_lifespan)
 
 _api_key_header = APIKeyHeader(name="Authorization", auto_error=False)
 
@@ -112,11 +129,6 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
-
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
 
 
 @app.get("/health")

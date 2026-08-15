@@ -55,8 +55,8 @@ def build_dossier(ip: str) -> str:
     hp_creds = list_honeypot_credentials_for_ip(ip)
     sections.append(f"🔑 Credenciais capturadas ({len(hp_creds)}):")
     if hp_creds:
-        for port, service, username, password, timestamp in hp_creds[:10]:
-            sections.append(f"  [{timestamp}] {service}:{port} -> usuário={username!r} senha={password!r}")
+        for port, service, _username, _password, timestamp in hp_creds[:10]:
+            sections.append(f"  [{timestamp}] {service}:{port} -> [valores protegidos]")
     else:
         sections.append("  Nenhuma credencial capturada.")
     sections.append("")

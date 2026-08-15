@@ -1,13 +1,8 @@
-# Nexus Defense AI — NOPASSWD restrito apenas aos comandos pfctl exatos
-# usados por tools/firewall.py. Nenhum outro comando é liberado.
-# Instalar com: sudo visudo -c -f deploy/nexus_defense.sudoers && \
-#               sudo install -m 440 deploy/nexus_defense.sudoers /etc/sudoers.d/nexus_defense
-
-ramonreis ALL=(root) NOPASSWD: /sbin/pfctl -a nexus_defense -t nexus_blocklist -T add *
-ramonreis ALL=(root) NOPASSWD: /sbin/pfctl -a nexus_defense -t nexus_blocklist -T delete *
-ramonreis ALL=(root) NOPASSWD: /sbin/pfctl -a nexus_defense -t nexus_blocklist -T show
-ramonreis ALL=(root) NOPASSWD: /sbin/pfctl -f /etc/pf.conf
-ramonreis ALL=(root) NOPASSWD: /sbin/pfctl -e
-ramonreis ALL=(root) NOPASSWD: /usr/bin/tee /etc/pf.anchors/nexus_defense
-ramonreis ALL=(root) NOPASSWD: /usr/bin/tee -a /etc/pf.conf
-ramonreis ALL=(root) NOPASSWD: /usr/bin/grep -q nexus_defense /etc/pf.conf
+# Rendered by deploy/install_firewall_helper.sh. The root-owned helper validates
+# the action, argument count, and IP/CIDR before invoking a fixed pfctl command.
+__NEXUS_USER__ ALL=(root) NOPASSWD: /usr/local/libexec/nexus-firewall block *
+__NEXUS_USER__ ALL=(root) NOPASSWD: /usr/local/libexec/nexus-firewall unblock *
+__NEXUS_USER__ ALL=(root) NOPASSWD: /usr/local/libexec/nexus-firewall list
+__NEXUS_USER__ ALL=(root) NOPASSWD: /usr/local/libexec/nexus-firewall rate-block *
+__NEXUS_USER__ ALL=(root) NOPASSWD: /usr/local/libexec/nexus-firewall rate-unblock *
+__NEXUS_USER__ ALL=(root) NOPASSWD: /usr/local/libexec/nexus-firewall rate-list

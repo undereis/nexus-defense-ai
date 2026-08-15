@@ -1,84 +1,43 @@
-"""Backend de isolamento via pfctl (macOS).
-
-Usa uma tabela pf dedicada (`nexus_blocklist`) dentro de um anchor próprio
-(`nexus_defense`), para nunca tocar nas regras de firewall existentes do
-usuário. Requer privilégios de root — os comandos pfctl são executados
-com `sudo` e podem pedir senha no terminal na primeira chamada.
-"""
+"""Backend de isolamento via helper privilegiado e restrito (macOS)."""
 
 import subprocess
 
-from config import PF_ANCHOR_NAME
-
-ANCHOR_FILE = f"/etc/pf.anchors/{PF_ANCHOR_NAME}"
-PF_CONF = "/etc/pf.conf"
-TABLE_NAME = "nexus_blocklist"
-RATE_TABLE_NAME = "nexus_ratelist"
-
-# Rate limit: IPs em nexus_ratelist podem ter no máximo 20 novas conexões
-# em 5 segundos. Se excederem, são promovidos AUTOMATICAMENTE para
-# nexus_blocklist (overload) e todo o estado é flushado. Isso significa
-# que rate limiting + auto-escalada para bloqueio total são tratados pelo
-# pf kernel — sem polling, sem decisão adicional do agente.
-ANCHOR_RULES = (
-    f"table <{TABLE_NAME}> persist\n"
-    f"table <{RATE_TABLE_NAME}> persist\n"
-    f"pass in quick from <{RATE_TABLE_NAME}> keep state "
-    f"(max-src-conn-rate 20/5, overload <{TABLE_NAME}> flush global)\n"
-    f"block drop quick from <{TABLE_NAME}> to any\n"
-)
-PF_CONF_BLOCK = f'\nanchor "{PF_ANCHOR_NAME}"\nload anchor "{PF_ANCHOR_NAME}" from "{ANCHOR_FILE}"\n'
+HELPER = "/usr/local/libexec/nexus-firewall"
 
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+def _helper(action: str, target: str | None = None) -> subprocess.CompletedProcess:
+    cmd = ["sudo", HELPER, action]
+    if target is not None:
+        cmd.append(target)
+    return _run(cmd)
+
+
 def setup() -> str:
-    """Configura o anchor pf uma única vez. Idempotente. Requer sudo."""
-    write_anchor = subprocess.run(
-        ["sudo", "tee", ANCHOR_FILE], input=ANCHOR_RULES, capture_output=True, text=True
-    )
-    if write_anchor.returncode != 0:
-        return f"Falha ao escrever anchor: {write_anchor.stderr}"
-
-    pf_conf_check = _run(["sudo", "grep", "-q", PF_ANCHOR_NAME, PF_CONF])
-    if pf_conf_check.returncode != 0:
-        append = subprocess.run(
-            ["sudo", "tee", "-a", PF_CONF], input=PF_CONF_BLOCK, capture_output=True, text=True
-        )
-        if append.returncode != 0:
-            return f"Falha ao atualizar pf.conf: {append.stderr}"
-
-    reload_result = _run(["sudo", "pfctl", "-f", PF_CONF])
-    _run(["sudo", "pfctl", "-e"])
-
-    # "pfctl -f" sempre imprime o aviso inofensivo de ALTQ no stderr no macOS;
-    # o que importa é se a tabela do nosso anchor de fato carregou no kernel.
-    if reload_result.returncode != 0:
-        return f"Falha ao recarregar pf: {reload_result.stderr.strip()}"
-
-    verify = _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "show"])
+    """Verifica se o helper foi instalado pelo administrador."""
+    verify = _helper("list")
     if verify.returncode != 0:
         return (
-            "Setup rodou, mas a tabela de bloqueio não carregou no anchor "
-            f"({verify.stderr.strip()}). Verifique se '{PF_ANCHOR_NAME}' está em {PF_CONF} "
-            "antes de qualquer anchor genérico de terceiros (ex: com.apple)."
+            "Helper do firewall indisponível. Execute uma vez: "
+            "sudo deploy/install_firewall_helper.sh. "
+            f"Detalhes: {verify.stderr.strip()}"
         )
-
-    return "Firewall (pf) configurado e ativo. Anchor e tabela de bloqueio confirmados no kernel."
+    return "Firewall (pf) ativo e helper privilegiado verificado."
 
 
 def block(ip: str) -> subprocess.CompletedProcess:
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "add", ip])
+    return _helper("block", ip)
 
 
 def unblock(ip: str) -> subprocess.CompletedProcess:
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "delete", ip])
+    return _helper("unblock", ip)
 
 
 def list_raw() -> subprocess.CompletedProcess:
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "show"])
+    return _helper("list")
 
 
 def parse_ips(stdout: str) -> list[str]:
@@ -89,21 +48,21 @@ def parse_ips(stdout: str) -> list[str]:
 def rate_limit(ip: str) -> subprocess.CompletedProcess:
     """Adiciona IP à tabela de rate limiting. Se exceder 20 conn/5s, pf
     promove automaticamente para nexus_blocklist (overload)."""
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", RATE_TABLE_NAME, "-T", "add", ip])
+    return _helper("rate-block", ip)
 
 
 def unrate_limit(ip: str) -> subprocess.CompletedProcess:
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", RATE_TABLE_NAME, "-T", "delete", ip])
+    return _helper("rate-unblock", ip)
 
 
 def list_rate_limited_raw() -> subprocess.CompletedProcess:
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", RATE_TABLE_NAME, "-T", "show"])
+    return _helper("rate-list")
 
 
 def block_cidr(cidr: str) -> subprocess.CompletedProcess:
     """pf tables aceitam CIDR diretamente — usa a mesma tabela de bloqueio."""
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "add", cidr])
+    return _helper("block", cidr)
 
 
 def unblock_cidr(cidr: str) -> subprocess.CompletedProcess:
-    return _run(["sudo", "pfctl", "-a", PF_ANCHOR_NAME, "-t", TABLE_NAME, "-T", "delete", cidr])
+    return _helper("unblock", cidr)

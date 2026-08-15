@@ -12,7 +12,34 @@ variáveis no corpo/numa fixture própria, que roda depois e sobrescreve — ent
 continuam funcionando.
 """
 
+import os
+from pathlib import Path
+import tempfile
+
 import pytest
+
+
+# Testes que validam ações permitidas esperam explicitamente o modo real, mas
+# toda integração externa é mockada pelas próprias suítes. O produto, fora do
+# pytest, inicia em `lab`. Um token determinístico impede que a API dependa de
+# segredos reais ou de geração/impressão de token durante a coleta.
+os.environ["NEXUS_SECRETS_BACKEND"] = "env"
+os.environ["NEXUS_API_TOKEN"] = "nexus-test-admin-token-not-for-production"
+os.environ["NEXUS_OPERATING_MODE"] = "real"
+os.environ["HONEYPOT_CREDENTIAL_KEY"] = (
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+)
+
+# A suíte nunca lê nem altera o banco operacional do desenvolvedor. A troca é
+# feita antes de os módulos de aplicação serem importados durante a coleta.
+_TEST_DATABASE_DIR = tempfile.TemporaryDirectory(prefix="nexus-tests-")
+import config  # noqa: E402
+
+config.DB_PATH = Path(_TEST_DATABASE_DIR.name) / "nexus.db"
+
+from database.db import init_db  # noqa: E402
+
+init_db()
 
 
 @pytest.fixture(autouse=True)

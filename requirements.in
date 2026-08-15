@@ -1,0 +1,17 @@
+langgraph
+langchain-anthropic
+langchain-core
+anthropic
+psutil
+python-dotenv
+requests
+fastapi
+uvicorn
+pytest
+pytest-mock
+librouteros
+pdfplumber
+reportlab
+ruff
+keyring
+cryptography

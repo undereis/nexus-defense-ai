@@ -14,9 +14,9 @@ Reaproveita o que já existe e é forte, em vez de duplicar:
   - AUDITORIA: database.db.log_event (hash chain), com os params REDIGIDOS
     (core.redaction) — segredo nunca entra na trilha em claro.
 
-Compatibilidade: por padrão (actor local_admin / role admin / modo real) o
-comportamento permitido é o mesmo de hoje — a diferença é que agora toda decisão
-(allow/deny/approval/dry-run/execute) fica auditada e governada.
+Compatibilidade: o caminho local mantém actor `local_admin` / role `admin`, mas o
+modo padrão é `lab`; toda decisão (allow/deny/approval/dry-run/execute) fica
+auditada e governada.
 
 Os nomes pedidos são reexportados aqui para quem importar de core.control_plane.
 """

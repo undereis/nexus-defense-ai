@@ -38,7 +38,7 @@ export function ConnectScreen() {
             Conectar
           </button>
           <div className="muted-note" style={{ marginTop: 10 }}>
-            Os dados ficam salvos localmente. Use HTTPS fora da LAN.
+            O token permanece somente nesta sessão. Esta build conecta apenas à API local.
           </div>
         </div>
       </div>

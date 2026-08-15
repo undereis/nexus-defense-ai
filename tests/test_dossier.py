@@ -47,7 +47,9 @@ def test_dossier_aggregates_honeypot_hits_and_credentials(dossier_module):
     result = dossier.build_dossier("8.8.4.4")
     assert "Capturas em honeypot (1)" in result
     assert "Credenciais capturadas (1)" in result
-    assert "admin" in result
+    assert "valores protegidos" in result
+    assert "admin" not in result
+    assert "1234" not in result
     assert "credential stuffing" in result.lower()
 
 
