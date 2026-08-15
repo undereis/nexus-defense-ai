@@ -163,3 +163,10 @@ local lab.
 Built by **Ramon Mascarenha Reis** at **NeuroForge Labs** — Cybersecurity & AI
 Systems Architecture. Connect on
 [LinkedIn](https://www.linkedin.com/in/ramon-reis-07358a79/).
+
+## License
+
+Nexus Defense AI is published as source-available portfolio software. Review
+and security research are welcome, but copying, modification, distribution,
+deployment, or commercial use requires prior written permission. See
+[LICENSE](LICENSE).
